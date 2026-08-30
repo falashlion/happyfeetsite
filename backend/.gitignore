@@ -1,0 +1,24 @@
+# Binaries
+happyfeet-api
+happyfeet-api-linux-amd64
+happyfeet-migrate
+*.exe
+
+# Test artifacts
+coverage.out
+coverage.html
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

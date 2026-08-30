@@ -1,0 +1,87 @@
+# ══════════════════════════════════════════════════════════════════════════
+# Caddy — TLS termination and routing
+#
+# Certificates are obtained and renewed from Let's Encrypt automatically; there
+# is nothing to configure and no cron job to forget. The only requirement is
+# that ports 80 and 443 reach this host and DNS already points at it.
+#
+# Everything is served from ONE origin: /api/v1/* goes to the Go API, the rest
+# to Next.js. That removes CORS entirely, means one certificate, and gives
+# Google OAuth a single authorised origin to whitelist.
+# ══════════════════════════════════════════════════════════════════════════
+
+{
+	email {$ACME_EMAIL}
+	# Uncomment to rehearse against Let's Encrypt's staging CA. Their production
+	# rate limit is 5 failed issuances per account per hostname per hour, which
+	# is easy to burn while DNS is still propagating.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# Send the apex to www (or reverse the two if you prefer a bare domain).
+{$DOMAIN} {
+	redir https://www.{$DOMAIN}{uri} permanent
+}
+
+www.{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		# HSTS. Start with a short max-age; raise it to 31536000 once you are
+		# certain HTTPS works everywhere, because browsers cache this and it
+		# cannot be withdrawn early.
+		Strict-Transport-Security "max-age=86400; includeSubDomains"
+		X-Content-Type-Options    "nosniff"
+		X-Frame-Options           "SAMEORIGIN"
+		Referrer-Policy           "strict-origin-when-cross-origin"
+		Permissions-Policy        "geolocation=(), microphone=(), camera=(), payment=()"
+		-Server
+	}
+
+	# ── API ───────────────────────────────────────────────────────────────
+	#
+	# Deliberately NOT setting X-Real-IP or overwriting X-Forwarded-For.
+	# Caddy appends the immediate peer to X-Forwarded-For by default, which
+	# gives the API the correct chain in both topologies:
+	#
+	#   direct        →  "<visitor>"
+	#   via Cloudflare →  "<visitor>, <cloudflare-edge>"
+	#
+	# The API keys its rate limiter on the FIRST entry, so it sees the real
+	# visitor either way. Overwriting the header with {remote_host} would
+	# replace the visitor with Cloudflare's edge address and put everyone
+	# behind a given PoP into one shared bucket.
+	handle /api/v1/* {
+		reverse_proxy api:8080 {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# Health endpoint for uptime monitoring, not under /api/v1.
+	handle /healthz {
+		reverse_proxy api:8080
+	}
+
+	# ── Storefront ────────────────────────────────────────────────────────
+	handle {
+		reverse_proxy web:3000 {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format json
+		# Health checks would otherwise dominate the log.
+		# (Remove this block if you want every request recorded.)
+	}
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# Swagger is developer documentation, not a public surface. Keep it off the
+# internet in production — delete this comment and add a `handle /swagger/*`
+# block with `basic_auth` if you want it reachable.
+# ══════════════════════════════════════════════════════════════════════════

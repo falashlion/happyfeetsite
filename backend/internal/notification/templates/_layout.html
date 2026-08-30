@@ -1,0 +1,118 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>{{.Subject}}</title>
+<!--[if mso]><style type="text/css">body,table,td,a{font-family:Georgia,'Times New Roman',serif !important}</style><![endif]-->
+<style type="text/css">
+  /* Email clients strip most CSS; everything structural is inlined below.
+     These rules only progressively enhance where they survive. */
+  body { margin:0; padding:0; width:100% !important; background:#f5efe0; }
+  img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+  table { border-collapse:collapse !important; }
+  a { color:#8c7034; }
+  @media only screen and (max-width:620px) {
+    .hf-shell   { width:100% !important; }
+    .hf-pad     { padding-left:22px !important; padding-right:22px !important; }
+    .hf-hero-pad{ padding-left:24px !important; padding-right:24px !important; padding-top:36px !important; padding-bottom:36px !important; }
+    .hf-h1      { font-size:30px !important; line-height:1.15 !important; }
+    .hf-stack   { display:block !important; width:100% !important; }
+    .hf-stack-r { display:block !important; width:100% !important; text-align:left !important; padding-top:4px !important; }
+    .hf-btn a   { display:block !important; text-align:center !important; }
+    .hf-line-amt{ text-align:left !important; padding-top:6px !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background:#f5efe0;">
+<div style="display:none;font-size:1px;color:#f5efe0;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">{{.Preheader}}</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5efe0;">
+  <tr>
+    <td align="center" style="padding:28px 12px;">
+
+      <table role="presentation" class="hf-shell" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px rgba(14,27,58,.10);">
+
+        <!-- ── Masthead ─────────────────────────────────────────── -->
+        <tr>
+          <td align="center" class="hf-hero-pad" style="background:#0e1b3a;padding:44px 40px;">
+            <div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:.30em;text-transform:uppercase;color:#d9be76;font-weight:700;">{{.Eyebrow}}</div>
+            <h1 class="hf-h1" style="margin:14px 0 0;font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:38px;line-height:1.1;color:#fbf8f1;letter-spacing:-.01em;">{{.Headline}}</h1>
+            {{if .Subhead}}<p style="margin:16px 0 0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;line-height:1.5;color:#d9be76;">{{.Subhead}}</p>{{end}}
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:22px auto 0;"><tr><td style="width:56px;height:1px;background:#c9a961;font-size:0;line-height:0;">&nbsp;</td></tr></table>
+          </td>
+        </tr>
+
+        {{template "body" .}}
+
+        <!-- ── Footer ───────────────────────────────────────────── -->
+        <tr>
+          <td class="hf-pad" style="background:#0a1330;padding:34px 40px;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:19px;color:#fbf8f1;letter-spacing:.04em;">Happy<span style="color:#c9a961;">&middot;</span>Feet</div>
+            <p style="margin:10px 0 0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:12px;line-height:1.7;color:rgba(245,239,224,.62);">
+              {{.Order.StoreAddress}}<br>
+              {{.Order.StoreHours}}<br>
+              WhatsApp {{.Order.WhatsAppDisplay}} &nbsp;&middot;&nbsp; <a href="mailto:{{.Order.SupportEmail}}" style="color:#d9be76;text-decoration:none;">{{.Order.SupportEmail}}</a>
+            </p>
+            <p style="margin:18px 0 0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:rgba(245,239,224,.34);">
+              This message concerns order {{.Order.OrderNumber}}
+            </p>
+          </td>
+        </tr>
+
+      </table>
+
+    </td>
+  </tr>
+</table>
+</body>
+</html>{{end}}
+
+{{/* ── Shared partials ────────────────────────────────────────────────── */}}
+
+{{define "itemsTable"}}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  {{range .Lines}}
+  <tr>
+    <td style="padding:14px 0;border-bottom:1px solid rgba(20,22,27,.08);">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="hf-stack" style="font-family:'Manrope',Helvetica,Arial,sans-serif;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:17px;color:#15161b;line-height:1.3;">{{.Name}}</div>
+            <div style="font-size:12px;color:#6e727f;padding-top:4px;letter-spacing:.02em;">{{.Variant}} &nbsp;&middot;&nbsp; Qty {{.Quantity}}</div>
+          </td>
+          <td class="hf-stack-r hf-line-amt" align="right" valign="top" style="font-family:Georgia,'Times New Roman',serif;font-size:16px;color:#15161b;white-space:nowrap;padding-left:14px;">{{.Amount}}</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {{end}}
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
+  <tr>
+    <td style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;color:#4a4d58;padding:5px 0;">Subtotal</td>
+    <td align="right" style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;color:#15161b;padding:5px 0;">{{.Subtotal}}</td>
+  </tr>
+  {{if .Discount}}
+  <tr>
+    <td style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;color:#8c7034;padding:5px 0;font-weight:600;">Discount</td>
+    <td align="right" style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;color:#8c7034;padding:5px 0;font-weight:600;">&minus; {{.Discount}}</td>
+  </tr>
+  {{end}}
+  <tr>
+    <td style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;color:#4a4d58;padding:5px 0;">Delivery &middot; {{.DeliveryLabel}}</td>
+    <td align="right" style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;color:#15161b;padding:5px 0;">{{.DeliveryFee}}</td>
+  </tr>
+  <tr><td colspan="2" style="padding:10px 0 0;"><div style="height:1px;background:rgba(20,22,27,.14);font-size:0;line-height:0;">&nbsp;</div></td></tr>
+  <tr>
+    <td style="font-family:Georgia,'Times New Roman',serif;font-size:20px;color:#0e1b3a;padding:12px 0 0;">Total</td>
+    <td align="right" style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#0e1b3a;padding:12px 0 0;">{{.Total}}</td>
+  </tr>
+</table>
+{{end}}
+
+{{define "sectionLabel"}}<div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:#b08f45;font-weight:700;padding-bottom:12px;">{{.}}</div>{{end}}

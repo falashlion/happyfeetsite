@@ -1,0 +1,166 @@
+# ══════════════════════════════════════════════════════════════════════════
+# Happy Feet — production stack (single host)
+#
+# Sized for an Oracle Cloud "Always Free" Ampere A1 VM (4 OCPU / 24 GB), but
+# nothing here is Oracle-specific — any Docker host works.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Only Caddy is published to the internet. Postgres, Redis and the two app
+# containers talk over the internal bridge network and are not port-mapped,
+# so they are unreachable from outside the host regardless of firewall state.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: happyfeet
+
+services:
+  # ── Edge: TLS termination, routing, compression ─────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # ACME account + certificates — MUST persist,
+      - caddy_config:/config  # or you will hit Let's Encrypt rate limits
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env.prod}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.prod}
+    depends_on:
+      - web
+      - api
+    networks: [app]
+
+  # ── Next.js storefront ──────────────────────────────────────────────────
+  web:
+    image: ${WEB_IMAGE:?set WEB_IMAGE}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Server-side rendering calls the API over the internal network, so SSR
+      # never leaves the host or re-enters through Caddy.
+      HAPPYFEET_API_URL: http://api:8080/api/v1
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [app]
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  # ── Go API ──────────────────────────────────────────────────────────────
+  api:
+    image: ${API_IMAGE:?set API_IMAGE}
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      DATABASE_URL: postgres://happyfeet:${POSTGRES_PASSWORD:?}@postgres:5432/happyfeet?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    healthcheck:
+      # distroless has no shell, no wget and no curl, so the binary probes
+      # itself: `-healthcheck` GETs /readyz and exits 0 or 1.
+      test: ["CMD", "/happyfeet-api", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [app]
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  # ── Migrations: runs to completion, then exits ──────────────────────────
+  # Invoked explicitly by the deploy workflow:
+  #   docker compose run --rm migrate
+  migrate:
+    image: ${API_IMAGE:?set API_IMAGE}
+    entrypoint: ["/happyfeet-migrate", "-direction", "up", "-path", "/migrations"]
+    env_file: .env.prod
+    environment:
+      DATABASE_URL: postgres://happyfeet:${POSTGRES_PASSWORD:?}@postgres:5432/happyfeet?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+    profiles: ["tools"]   # never started by `up`
+    networks: [app]
+
+  # ── Postgres ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: happyfeet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: happyfeet
+      # Checksums catch silent disk corruption — cheap insurance on a single
+      # box with no replica to compare against.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U happyfeet -d happyfeet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [app]
+    deploy:
+      resources:
+        limits: { memory: 4g }
+
+  # ── Redis ───────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Sessions and idempotency keys live here. AOF everysec keeps at most one
+    # second of loss on a crash, which is the right trade for this data.
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [app]
+
+  # ── Nightly database backup ─────────────────────────────────────────────
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - backups:/backups
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [app]
+
+volumes:
+  pgdata:
+  redisdata:
+  backups:
+  caddy_data:
+  caddy_config:
+
+networks:
+  # A single bridge network. Postgres and Redis are protected by having no
+  # published ports — not by `internal: true`, which would also cut the API's
+  # OUTBOUND access to Google's key endpoint and the SMTP relay.
+  app:
+    driver: bridge

@@ -1,0 +1,4731 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "HappyFeet E-Commerce API",
+    "version": "1.0.0",
+    "description": "## HappyFeet Platform API\n\nHigh-performance e-commerce API for the HappyFeet shoe store platform.\nBuilt with Go, designed for 100,000+ concurrent users.\n\n### Authentication\nAll protected endpoints require a Bearer JWT token obtained via `/api/v1/auth/login`.\n\n```\nAuthorization: Bearer <access_token>\n```\n\n### Rate Limiting\n| Client Type       | Limit              |\n|-------------------|--------------------|\n| Guest             | 100 req/min        |\n| Authenticated     | 500 req/min        |\n| Vendor            | 2,000 req/min      |\n| Admin             | Unlimited          |\n\nRate limit headers returned on every response:\n- `X-RateLimit-Limit`\n- `X-RateLimit-Remaining`\n- `X-RateLimit-Reset`\n\n### Pagination\nAll list endpoints use **cursor-based pagination**:\n```json\n{\n  \"data\": [...],\n  \"meta\": {\n    \"cursor\": \"eyJpZCI6MTAwfQ==\",\n    \"has_more\": true,\n    \"total\": 2450\n  }\n}\n```\n\n### Error Format\nAll errors follow a consistent structure:\n```json\n{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"Human-readable message\",\n    \"details\": [\n      { \"field\": \"email\", \"issue\": \"must be a valid email address\" }\n    ],\n    \"request_id\": \"req_01HZ...\"\n  }\n}\n```\n\n### Idempotency\nPayment and order creation endpoints require an `Idempotency-Key` header (UUIDv4).\nSafe to retry \u2014 duplicate keys return the original response.\n",
+    "contact": {
+      "name": "HappyFeet Engineering",
+      "email": "engineering@happyfeet.com"
+    },
+    "license": {
+      "name": "Proprietary",
+      "url": "https://happyfeet.com/terms"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.happyfeet.com/api/v1",
+      "description": "Production"
+    },
+    {
+      "url": "https://staging-api.happyfeet.com/api/v1",
+      "description": "Staging"
+    },
+    {
+      "url": "http://localhost:8080/api/v1",
+      "description": "Local Development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Authentication, registration, token management"
+    },
+    {
+      "name": "Users",
+      "description": "User profile and address management"
+    },
+    {
+      "name": "Products",
+      "description": "Product catalog, search, and management"
+    },
+    {
+      "name": "Categories",
+      "description": "Shoe categories and brands"
+    },
+    {
+      "name": "Cart",
+      "description": "Shopping cart operations"
+    },
+    {
+      "name": "Orders",
+      "description": "Order lifecycle management"
+    },
+    {
+      "name": "Payments",
+      "description": "Payment initiation and webhook processing"
+    },
+    {
+      "name": "Reviews",
+      "description": "Product ratings and reviews"
+    },
+    {
+      "name": "Wishlist",
+      "description": "User wishlist management"
+    },
+    {
+      "name": "Media",
+      "description": "Image upload and media management"
+    },
+    {
+      "name": "Notifications",
+      "description": "Notification preferences and history"
+    },
+    {
+      "name": "Vendors",
+      "description": "Vendor portal and management"
+    },
+    {
+      "name": "Admin",
+      "description": "Admin operations (Admin role required)"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT access token (15-minute expiry). Obtain via /auth/login."
+      },
+      "RefreshToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Long-lived refresh token (30 days). Used only on /auth/refresh."
+      },
+      "WebhookSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Signature-SHA256",
+        "description": "HMAC-SHA256 signature of the raw request body using the webhook secret."
+      }
+    },
+    "schemas": {
+      "UUID": {
+        "type": "string",
+        "format": "uuid",
+        "example": "550e8400-e29b-41d4-a716-446655440000"
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "example": "2026-05-08T12:00:00Z"
+      },
+      "Currency": {
+        "type": "string",
+        "enum": [
+          "XAF",
+          "XOF",
+          "USD",
+          "EUR",
+          "GHS",
+          "UGX",
+          "NGN"
+        ],
+        "example": "XAF"
+      },
+      "Money": {
+        "type": "object",
+        "required": [
+          "amount",
+          "currency"
+        ],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "example": 25000.0
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          }
+        }
+      },
+      "PaginationMeta": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "nullable": true,
+            "description": "Opaque cursor for the next page",
+            "example": "eyJpZCI6MTAwfQ=="
+          },
+          "has_more": {
+            "type": "boolean",
+            "example": true
+          },
+          "total": {
+            "type": "integer",
+            "example": 2450
+          }
+        }
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "example": "email"
+          },
+          "issue": {
+            "type": "string",
+            "example": "must be a valid email address"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "VALIDATION_ERROR"
+              },
+              "message": {
+                "type": "string",
+                "example": "One or more fields failed validation"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              },
+              "request_id": {
+                "type": "string",
+                "example": "req_01HZ9XYZABC"
+              }
+            }
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "first_name",
+          "last_name",
+          "password"
+        ],
+        "properties": {
+          "first_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "example": "Falash"
+          },
+          "last_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "example": "Mensah"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "falash@example.com"
+          },
+          "phone": {
+            "type": "string",
+            "description": "E.164 format",
+            "pattern": "^\\+[1-9]\\d{1,14}$",
+            "example": "+237612345678"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "description": "Min 8 chars, 1 uppercase, 1 digit",
+            "example": "SecurePass1"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "falash@example.com"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+237612345678"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "example": "SecurePass1"
+          }
+        }
+      },
+      "AuthTokens": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "JWT access token, 15-minute expiry"
+          },
+          "refresh_token": {
+            "type": "string",
+            "description": "Refresh token, 30-day expiry"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "Bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "description": "Access token TTL in seconds",
+            "example": 900
+          }
+        }
+      },
+      "OTPRequest": {
+        "type": "object",
+        "required": [
+          "channel"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ],
+            "example": "sms"
+          }
+        }
+      },
+      "OTPVerifyRequest": {
+        "type": "object",
+        "required": [
+          "otp",
+          "channel"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "otp": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 6,
+            "example": "482910"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ]
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "first_name": {
+            "type": "string",
+            "example": "Falash"
+          },
+          "last_name": {
+            "type": "string",
+            "example": "Mensah"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "customer",
+              "vendor",
+              "admin",
+              "super_admin"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suspended",
+              "pending_verification"
+            ]
+          },
+          "avatar_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "email_verified_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "nullable": true
+          },
+          "phone_verified_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "nullable": true
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Address": {
+        "type": "object",
+        "required": [
+          "label",
+          "street",
+          "city",
+          "country"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "label": {
+            "type": "string",
+            "description": "Home, Work, etc.",
+            "example": "Home"
+          },
+          "recipient_name": {
+            "type": "string",
+            "example": "Falash Mensah"
+          },
+          "recipient_phone": {
+            "type": "string",
+            "example": "+237612345678"
+          },
+          "street": {
+            "type": "string",
+            "example": "123 Rue de la Paix"
+          },
+          "city": {
+            "type": "string",
+            "example": "Yaound\u00e9"
+          },
+          "state": {
+            "type": "string",
+            "example": "Centre"
+          },
+          "postal_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "country": {
+            "type": "string",
+            "description": "ISO 3166-1 alpha-2",
+            "example": "CM"
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true,
+            "example": 3.848
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true,
+            "example": 11.5021
+          },
+          "is_default": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "ProductImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "url_thumbnail": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://cdn.happyfeet.com/products/abc/thumb.webp"
+          },
+          "url_small": {
+            "type": "string",
+            "format": "uri"
+          },
+          "url_medium": {
+            "type": "string",
+            "format": "uri"
+          },
+          "url_large": {
+            "type": "string",
+            "format": "uri"
+          },
+          "url_original": {
+            "type": "string",
+            "format": "uri"
+          },
+          "is_primary": {
+            "type": "boolean"
+          },
+          "sort_order": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ProductSKU": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "sku_code": {
+            "type": "string",
+            "example": "HF-NK-AM-42-BLK"
+          },
+          "size_eu": {
+            "type": "number",
+            "example": 42
+          },
+          "size_us": {
+            "type": "number",
+            "example": 9
+          },
+          "size_uk": {
+            "type": "number",
+            "example": 8
+          },
+          "color": {
+            "type": "string",
+            "example": "Black"
+          },
+          "color_hex": {
+            "type": "string",
+            "example": "#000000"
+          },
+          "width": {
+            "type": "string",
+            "enum": [
+              "narrow",
+              "standard",
+              "wide"
+            ],
+            "example": "standard"
+          },
+          "stock_qty": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 50
+          },
+          "additional_price": {
+            "type": "number",
+            "format": "double",
+            "description": "Added to base_price for this variant",
+            "example": 0.0
+          }
+        }
+      },
+      "ProductSummary": {
+        "type": "object",
+        "description": "Lightweight product for lists and search results",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "name": {
+            "type": "string",
+            "example": "Nike Air Max 270"
+          },
+          "slug": {
+            "type": "string",
+            "example": "nike-air-max-270"
+          },
+          "brand": {
+            "type": "string",
+            "example": "Nike"
+          },
+          "category": {
+            "type": "string",
+            "example": "Sneakers"
+          },
+          "base_price": {
+            "type": "number",
+            "format": "double",
+            "example": 45000.0
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "discount_percent": {
+            "type": "integer",
+            "nullable": true,
+            "example": 15
+          },
+          "final_price": {
+            "type": "number",
+            "format": "double",
+            "example": 38250.0
+          },
+          "primary_image": {
+            "$ref": "#/components/schemas/ProductImage"
+          },
+          "rating_avg": {
+            "type": "number",
+            "format": "double",
+            "example": 4.5
+          },
+          "rating_count": {
+            "type": "integer",
+            "example": 128
+          },
+          "in_stock": {
+            "type": "boolean",
+            "example": true
+          },
+          "is_new": {
+            "type": "boolean",
+            "example": false
+          },
+          "available_sizes": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "example": [
+              39,
+              40,
+              41,
+              42,
+              43,
+              44
+            ]
+          }
+        }
+      },
+      "ProductDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProductSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "example": "Comfortable everyday sneaker with Max Air cushioning."
+              },
+              "images": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ProductImage"
+                }
+              },
+              "skus": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ProductSKU"
+                }
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "example": [
+                  "running",
+                  "cushioned",
+                  "lifestyle"
+                ]
+              },
+              "vendor_id": {
+                "$ref": "#/components/schemas/UUID"
+              },
+              "vendor_name": {
+                "type": "string",
+                "example": "SportZone Cameroon"
+              },
+              "return_policy": {
+                "type": "string",
+                "example": "14-day returns accepted"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "active",
+                  "archived"
+                ]
+              },
+              "created_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "updated_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            }
+          }
+        ]
+      },
+      "CreateProductRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "category_id",
+          "brand_id",
+          "base_price",
+          "currency",
+          "description"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "category_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "brand_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 5000
+          },
+          "base_price": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skus": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductSKU"
+            }
+          }
+        }
+      },
+      "ProductFilter": {
+        "type": "object",
+        "properties": {
+          "category_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "brand_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "min_price": {
+            "type": "number"
+          },
+          "max_price": {
+            "type": "number"
+          },
+          "sizes": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "in_stock": {
+            "type": "boolean"
+          },
+          "min_rating": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "sort_by": {
+            "type": "string",
+            "enum": [
+              "relevance",
+              "price_asc",
+              "price_desc",
+              "newest",
+              "rating",
+              "discount"
+            ],
+            "default": "relevance"
+          }
+        }
+      },
+      "CartItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "product_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "sku_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "product_name": {
+            "type": "string",
+            "example": "Nike Air Max 270"
+          },
+          "primary_image_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "size_eu": {
+            "type": "number",
+            "example": 42
+          },
+          "color": {
+            "type": "string",
+            "example": "Black"
+          },
+          "unit_price": {
+            "type": "number",
+            "format": "double",
+            "example": 45000.0
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "example": 1
+          },
+          "subtotal": {
+            "type": "number",
+            "format": "double",
+            "example": 45000.0
+          },
+          "stock_available": {
+            "type": "integer",
+            "description": "Current available stock for this SKU"
+          }
+        }
+      },
+      "Cart": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CartItem"
+            }
+          },
+          "items_count": {
+            "type": "integer",
+            "example": 3
+          },
+          "subtotal": {
+            "type": "number",
+            "format": "double",
+            "example": 115000.0
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "coupon_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "discount_amount": {
+            "type": "number",
+            "format": "double",
+            "example": 0.0
+          },
+          "total": {
+            "type": "number",
+            "format": "double",
+            "example": 115000.0
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "AddCartItemRequest": {
+        "type": "object",
+        "required": [
+          "sku_id",
+          "quantity"
+        ],
+        "properties": {
+          "sku_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "example": 1
+          }
+        }
+      },
+      "OrderStatus": {
+        "type": "string",
+        "enum": [
+          "PLACED",
+          "PAID",
+          "PROCESSING",
+          "SHIPPED",
+          "DELIVERED",
+          "CANCELLED",
+          "RETURN_REQUESTED",
+          "RETURNED",
+          "REFUNDED"
+        ]
+      },
+      "DeliveryMethod": {
+        "type": "string",
+        "enum": [
+          "STANDARD",
+          "EXPRESS",
+          "SAME_DAY"
+        ]
+      },
+      "OrderItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "product_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "sku_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "product_name": {
+            "type": "string"
+          },
+          "primary_image_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "size_eu": {
+            "type": "number"
+          },
+          "color": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "unit_price": {
+            "type": "number",
+            "format": "double"
+          },
+          "subtotal": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "order_number": {
+            "type": "string",
+            "example": "HF-2026-00012847"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItem"
+            }
+          },
+          "delivery_address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "delivery_method": {
+            "$ref": "#/components/schemas/DeliveryMethod"
+          },
+          "delivery_fee": {
+            "type": "number",
+            "format": "double",
+            "example": 2000.0
+          },
+          "subtotal": {
+            "type": "number",
+            "format": "double"
+          },
+          "discount_amount": {
+            "type": "number",
+            "format": "double",
+            "example": 0.0
+          },
+          "total_amount": {
+            "type": "number",
+            "format": "double"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "payment_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "payment_method": {
+            "type": "string",
+            "example": "mtn_momo"
+          },
+          "estimated_delivery_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "tracking_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true
+          },
+          "placed_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "CreateOrderRequest": {
+        "type": "object",
+        "required": [
+          "delivery_address_id",
+          "delivery_method",
+          "payment_method"
+        ],
+        "properties": {
+          "delivery_address_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "delivery_method": {
+            "$ref": "#/components/schemas/DeliveryMethod"
+          },
+          "payment_method": {
+            "type": "string",
+            "enum": [
+              "mtn_momo",
+              "orange_money",
+              "card",
+              "cash_on_delivery"
+            ]
+          },
+          "coupon_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        }
+      },
+      "ReturnRequest": {
+        "type": "object",
+        "required": [
+          "reason",
+          "items"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "wrong_size",
+              "damaged",
+              "not_as_described",
+              "changed_mind",
+              "other"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "order_item_id",
+                "quantity"
+              ],
+              "properties": {
+                "order_item_id": {
+                  "$ref": "#/components/schemas/UUID"
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "PaymentProvider": {
+        "type": "string",
+        "enum": [
+          "mtn_momo",
+          "orange_money",
+          "stripe",
+          "cinetpay",
+          "cash_on_delivery"
+        ]
+      },
+      "PaymentStatus": {
+        "type": "string",
+        "enum": [
+          "INITIATED",
+          "PENDING",
+          "COMPLETED",
+          "FAILED",
+          "CANCELLED",
+          "REFUNDED",
+          "PARTIALLY_REFUNDED"
+        ]
+      },
+      "InitiatePaymentRequest": {
+        "type": "object",
+        "required": [
+          "order_id",
+          "provider"
+        ],
+        "properties": {
+          "order_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/PaymentProvider"
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "Required for MTN MoMo and Orange Money",
+            "example": "+237612345678"
+          },
+          "return_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Redirect URL after card payment",
+            "nullable": true
+          }
+        }
+      },
+      "PaymentResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "order_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/PaymentProvider"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentStatus"
+          },
+          "amount": {
+            "type": "number",
+            "format": "double"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "provider_reference": {
+            "type": "string",
+            "description": "Transaction ID from the payment provider",
+            "nullable": true
+          },
+          "ussd_string": {
+            "type": "string",
+            "description": "USSD code for manual payment (MoMo/Orange fallback)",
+            "nullable": true,
+            "example": "*126*1*1*237612345678*25000#"
+          },
+          "checkout_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Redirect URL for card payments",
+            "nullable": true
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "initiated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "confirmed_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "nullable": true
+          }
+        }
+      },
+      "Review": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "product_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "user_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "user_name": {
+            "type": "string",
+            "example": "Falash M."
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "example": 5
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 150,
+            "example": "Best sneakers I've owned"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "verified_purchase": {
+            "type": "boolean"
+          },
+          "helpful_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "CreateReviewRequest": {
+        "type": "object",
+        "required": [
+          "order_id",
+          "rating"
+        ],
+        "properties": {
+          "order_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 150
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        }
+      },
+      "PresignedUploadResponse": {
+        "type": "object",
+        "properties": {
+          "upload_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "presigned_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Direct S3 upload URL (15-minute expiry)"
+          },
+          "fields": {
+            "type": "object",
+            "description": "Form fields to include with multipart POST upload",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "max_size_bytes": {
+            "type": "integer",
+            "example": 52428800,
+            "description": "Max 50MB"
+          }
+        }
+      },
+      "ImageProcessingStatus": {
+        "type": "object",
+        "properties": {
+          "upload_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "complete",
+              "failed"
+            ]
+          },
+          "images": {
+            "$ref": "#/components/schemas/ProductImage",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "Vendor": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "business_name": {
+            "type": "string",
+            "example": "SportZone Cameroon"
+          },
+          "owner_id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "active",
+              "suspended",
+              "rejected"
+            ]
+          },
+          "commission_rate": {
+            "type": "number",
+            "format": "double",
+            "description": "Platform commission percentage",
+            "example": 8.5
+          },
+          "total_sales": {
+            "type": "number",
+            "format": "double"
+          },
+          "rating_avg": {
+            "type": "number",
+            "format": "double"
+          },
+          "rating_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      }
+    },
+    "parameters": {
+      "CursorParam": {
+        "name": "cursor",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        },
+        "description": "Pagination cursor from previous response"
+      },
+      "LimitParam": {
+        "name": "limit",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "description": "Number of results per page"
+      },
+      "ProductIdParam": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/UUID"
+        },
+        "description": "Product UUID"
+      },
+      "OrderIdParam": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/UUID"
+        },
+        "description": "Order UUID"
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid authentication token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "UNAUTHORIZED",
+                "message": "Invalid or expired access token",
+                "request_id": "req_01HZ9XYZ"
+              }
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions for this action",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "NOT_FOUND",
+                "message": "Resource not found",
+                "request_id": "req_01HZ9XYZ"
+              }
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Request validation failed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Rate limit exceeded",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Seconds until rate limit resets"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Register new user account",
+        "operationId": "registerUser",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              },
+              "example": {
+                "first_name": "Falash",
+                "last_name": "Mensah",
+                "phone": "+237612345678",
+                "password": "SecurePass1"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registration successful \u2014 OTP sent for verification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Account created. Please verify your phone number."
+                    },
+                    "user_id": {
+                      "$ref": "#/components/schemas/UUID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "409": {
+            "description": "Email or phone already registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "An account with this phone number already exists"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login with email/phone and password",
+        "operationId": "loginUser",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              },
+              "examples": {
+                "phone_login": {
+                  "summary": "Login with phone",
+                  "value": {
+                    "phone": "+237612345678",
+                    "password": "SecurePass1"
+                  }
+                },
+                "email_login": {
+                  "summary": "Login with email",
+                  "value": {
+                    "email": "falash@example.com",
+                    "password": "SecurePass1"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {
+                      "$ref": "#/components/schemas/AuthTokens"
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    },
+                    "requires_mfa": {
+                      "type": "boolean",
+                      "description": "If true, submit OTP before tokens are valid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Account locked due to too many failed attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "ACCOUNT_LOCKED",
+                    "message": "Account locked. Try again in 15 minutes."
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Refresh access token",
+        "operationId": "refreshToken",
+        "security": [
+          {
+            "RefreshToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "New token pair issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthTokens"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Logout \u2014 revoke tokens",
+        "operationId": "logoutUser",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refresh_token": {
+                    "type": "string",
+                    "description": "Include to revoke refresh token as well"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Logged out successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/otp/send": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Send OTP for phone/email verification",
+        "operationId": "sendOTP",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OTPRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "OTP sent to +237612345678"
+                    },
+                    "expires_in": {
+                      "type": "integer",
+                      "example": 300,
+                      "description": "OTP validity in seconds"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "OTP request limit reached (max 3 per 10 minutes)",
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        }
+      }
+    },
+    "/auth/otp/verify": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Verify OTP code",
+        "operationId": "verifyOTP",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OTPVerifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP verified. Returns tokens for registration flow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "verified": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "tokens": {
+                      "$ref": "#/components/schemas/AuthTokens",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired OTP",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password/reset": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Request password reset",
+        "operationId": "requestPasswordReset",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "sms"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reset link/OTP sent (always 200 to prevent enumeration)"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Confirm new password with reset token",
+        "operationId": "confirmPasswordReset",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "new_password"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "new_password": {
+                    "type": "string",
+                    "format": "password",
+                    "minLength": 8
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password updated. All existing sessions invalidated."
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/auth/social/google": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Google OAuth2 login",
+        "operationId": "googleLogin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id_token"
+                ],
+                "properties": {
+                  "id_token": {
+                    "type": "string",
+                    "description": "Google ID token from client-side Google Sign-In"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login/registration successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {
+                      "$ref": "#/components/schemas/AuthTokens"
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    },
+                    "is_new_user": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/social/apple": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Sign in with Apple",
+        "operationId": "appleLogin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "identity_token",
+                  "authorization_code"
+                ],
+                "properties": {
+                  "identity_token": {
+                    "type": "string"
+                  },
+                  "authorization_code": {
+                    "type": "string"
+                  },
+                  "first_name": {
+                    "type": "string",
+                    "description": "Only provided on first sign-in"
+                  },
+                  "last_name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login/registration successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {
+                      "$ref": "#/components/schemas/AuthTokens"
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get current user profile",
+        "operationId": "getMyProfile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update current user profile",
+        "operationId": "updateMyProfile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "first_name": {
+                    "type": "string"
+                  },
+                  "last_name": {
+                    "type": "string"
+                  },
+                  "avatar_upload_id": {
+                    "$ref": "#/components/schemas/UUID",
+                    "description": "Upload ID from /media/upload after uploading avatar"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated user profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me/addresses": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List user's saved addresses",
+        "operationId": "listAddresses",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Address"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Add new delivery address",
+        "operationId": "addAddress",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Address"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Address created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Address"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me/addresses/{addressId}": {
+      "put": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update a delivery address",
+        "operationId": "updateAddress",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "addressId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Address"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Address"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Delete a delivery address",
+        "operationId": "deleteAddress",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "addressId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Address deleted"
+          }
+        }
+      }
+    },
+    "/products": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "List products with filtering and pagination",
+        "operationId": "listProducts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          },
+          {
+            "name": "brand_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "max_price",
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "sizes",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "colors",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "in_stock",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "min_rating",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 5
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "relevance",
+                "price_asc",
+                "price_desc",
+                "newest",
+                "rating",
+                "discount"
+              ],
+              "default": "relevance"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of products",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Create a new product (Vendor/Admin only)",
+        "operationId": "createProduct",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProductRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Product created in draft status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/products/search": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Full-text product search",
+        "operationId": "searchProducts",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Search query",
+            "example": "nike air max running"
+          },
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "relevance",
+                "price_asc",
+                "price_desc",
+                "newest",
+                "rating"
+              ],
+              "default": "relevance"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    "suggestions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Did-you-mean suggestions",
+                      "example": [
+                        "nike air max",
+                        "nike air force"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/products/featured": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Get featured and trending products",
+        "operationId": "getFeaturedProducts",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 12,
+              "maximum": 48
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Featured products",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featured": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    },
+                    "trending": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    },
+                    "new_arrivals": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    },
+                    "on_sale": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/products/{id}": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Get product detail",
+        "operationId": "getProduct",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProductIdParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full product details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Update product (Vendor/Admin)",
+        "operationId": "updateProduct",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProductIdParam"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProductRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Archive product (soft delete)",
+        "operationId": "archiveProduct",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProductIdParam"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Product archived"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/products/{id}/images": {
+      "post": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Request pre-signed URLs for product image upload",
+        "operationId": "requestProductImageUpload",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProductIdParam"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "files"
+                ],
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "filename",
+                        "content_type",
+                        "size_bytes"
+                      ],
+                      "properties": {
+                        "filename": {
+                          "type": "string",
+                          "example": "nike-air-max-side.jpg"
+                        },
+                        "content_type": {
+                          "type": "string",
+                          "enum": [
+                            "image/jpeg",
+                            "image/png",
+                            "image/webp"
+                          ]
+                        },
+                        "size_bytes": {
+                          "type": "integer",
+                          "maximum": 52428800
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pre-signed upload URLs (valid 15 min). Upload files directly to these URLs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "uploads": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PresignedUploadResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/products/{id}/images/{imageId}": {
+      "patch": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Update image metadata (sort order, primary flag)",
+        "operationId": "updateProductImage",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProductIdParam"
+          },
+          {
+            "name": "imageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "is_primary": {
+                    "type": "boolean"
+                  },
+                  "sort_order": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Image updated"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Remove a product image",
+        "operationId": "deleteProductImage",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProductIdParam"
+          },
+          {
+            "name": "imageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Image removed"
+          }
+        }
+      }
+    },
+    "/products/{id}/reviews": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "List reviews for a product",
+        "operationId": "listProductReviews",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProductIdParam"
+          },
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "description": "Filter by star rating"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest",
+                "highest_rating",
+                "lowest_rating",
+                "most_helpful"
+              ],
+              "default": "newest"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product reviews",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Review"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "average": {
+                          "type": "number",
+                          "example": 4.5
+                        },
+                        "total": {
+                          "type": "integer",
+                          "example": 128
+                        },
+                        "distribution": {
+                          "type": "object",
+                          "description": "Count per star rating",
+                          "example": {
+                            "5": 78,
+                            "4": 32,
+                            "3": 10,
+                            "2": 5,
+                            "1": 3
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/categories": {
+      "get": {
+        "tags": [
+          "Categories"
+        ],
+        "summary": "List all shoe categories",
+        "operationId": "listCategories",
+        "responses": {
+          "200": {
+            "description": "All categories with subcategories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/UUID"
+                          },
+                          "name": {
+                            "type": "string",
+                            "example": "Sneakers"
+                          },
+                          "slug": {
+                            "type": "string",
+                            "example": "sneakers"
+                          },
+                          "icon_url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "product_count": {
+                            "type": "integer"
+                          },
+                          "subcategories": {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands": {
+      "get": {
+        "tags": [
+          "Categories"
+        ],
+        "summary": "List all shoe brands",
+        "operationId": "listBrands",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search brands by name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Brand list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/UUID"
+                          },
+                          "name": {
+                            "type": "string",
+                            "example": "Nike"
+                          },
+                          "logo_url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "product_count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cart": {
+      "get": {
+        "tags": [
+          "Cart"
+        ],
+        "summary": "Get current cart",
+        "operationId": "getCart",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Guest-Token",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Guest session token (for unauthenticated cart)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current cart state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cart"
+        ],
+        "summary": "Clear entire cart",
+        "operationId": "clearCart",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Cart cleared"
+          }
+        }
+      }
+    },
+    "/cart/items": {
+      "post": {
+        "tags": [
+          "Cart"
+        ],
+        "summary": "Add item to cart",
+        "operationId": "addToCart",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddCartItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated cart",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Requested quantity exceeds available stock",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "INSUFFICIENT_STOCK",
+                    "message": "Only 3 units available for this size"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cart/items/{itemId}": {
+      "put": {
+        "tags": [
+          "Cart"
+        ],
+        "summary": "Update cart item quantity",
+        "operationId": "updateCartItem",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "quantity"
+                ],
+                "properties": {
+                  "quantity": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated cart",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cart"
+        ],
+        "summary": "Remove item from cart",
+        "operationId": "removeCartItem",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated cart",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cart/coupon": {
+      "post": {
+        "tags": [
+          "Cart"
+        ],
+        "summary": "Apply coupon code to cart",
+        "operationId": "applyCoupon",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "coupon_code"
+                ],
+                "properties": {
+                  "coupon_code": {
+                    "type": "string",
+                    "example": "HAPPYFEET20"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Coupon applied, updated cart returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Coupon invalid, expired, or not applicable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cart"
+        ],
+        "summary": "Remove coupon from cart",
+        "operationId": "removeCoupon",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Coupon removed, updated cart returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "List current user's orders",
+        "operationId": "listOrders",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/OrderStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User's orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Order"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Create order from cart (checkout)",
+        "operationId": "createOrder",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "UUIDv4. Safe to retry \u2014 returns original response on duplicate."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Order created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "order": {
+                      "$ref": "#/components/schemas/Order"
+                    },
+                    "payment": {
+                      "$ref": "#/components/schemas/PaymentResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "409": {
+            "description": "Cart has items with insufficient stock",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders/{id}": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Get order detail and current status",
+        "operationId": "getOrder",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrderIdParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Order details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/orders/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Cancel an order",
+        "operationId": "cancelOrder",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrderIdParam"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Order cancelled, refund initiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Order cannot be cancelled (already shipped)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders/{id}/return": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Submit a return request",
+        "operationId": "returnOrder",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrderIdParam"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReturnRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Return request submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "return_id": {
+                      "$ref": "#/components/schemas/UUID"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "PENDING_REVIEW"
+                    },
+                    "instructions": {
+                      "type": "string",
+                      "example": "Our team will review your request within 24 hours."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/initiate": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Initiate payment for an order",
+        "operationId": "initiatePayment",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiatePaymentRequest"
+              },
+              "examples": {
+                "mtn_momo": {
+                  "summary": "MTN Mobile Money",
+                  "value": {
+                    "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "provider": "mtn_momo",
+                    "phone_number": "+237612345678"
+                  }
+                },
+                "orange_money": {
+                  "summary": "Orange Money",
+                  "value": {
+                    "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "provider": "orange_money",
+                    "phone_number": "+237698765432"
+                  }
+                },
+                "card": {
+                  "summary": "Card payment",
+                  "value": {
+                    "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "provider": "stripe",
+                    "return_url": "https://happyfeet.com/checkout/complete"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment initiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{id}/status": {
+      "get": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Poll payment status",
+        "operationId": "getPaymentStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current payment status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/webhook/mtn": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "MTN MoMo payment webhook",
+        "operationId": "mtnWebhook",
+        "description": "Receives async payment confirmation from MTN MoMo Collections API.\nValidates HMAC-SHA256 signature before processing.\nAlways returns 200 to acknowledge receipt (idempotent).\n",
+        "security": [
+          {
+            "WebhookSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "MTN MoMo webhook payload (pass-through)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook received and acknowledged"
+          }
+        }
+      }
+    },
+    "/payments/webhook/orange": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Orange Money payment webhook",
+        "operationId": "orangeWebhook",
+        "security": [
+          {
+            "WebhookSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook received and acknowledged"
+          }
+        }
+      }
+    },
+    "/payments/webhook/stripe": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Stripe card payment webhook",
+        "operationId": "stripeWebhook",
+        "security": [
+          {
+            "WebhookSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook received and acknowledged"
+          }
+        }
+      }
+    },
+    "/payments/{id}/refund": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Initiate refund (Admin only)",
+        "operationId": "initiateRefund",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Partial or full refund amount"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "customer_request",
+                      "fraud",
+                      "order_error",
+                      "other"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Refund initiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/reviews": {
+      "post": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "Submit a product review (verified buyers only)",
+        "operationId": "createReview",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Review submitted (pending moderation)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a verified buyer for this product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Review already submitted for this order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reviews/{reviewId}/helpful": {
+      "post": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "Mark review as helpful",
+        "operationId": "markReviewHelpful",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reviewId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Helpful count updated"
+          }
+        }
+      }
+    },
+    "/wishlist": {
+      "get": {
+        "tags": [
+          "Wishlist"
+        ],
+        "summary": "Get user's wishlist",
+        "operationId": "getWishlist",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Wishlist items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Wishlist"
+        ],
+        "summary": "Add product to wishlist",
+        "operationId": "addToWishlist",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "$ref": "#/components/schemas/UUID"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Added to wishlist"
+          }
+        }
+      }
+    },
+    "/wishlist/{productId}": {
+      "delete": {
+        "tags": [
+          "Wishlist"
+        ],
+        "summary": "Remove product from wishlist",
+        "operationId": "removeFromWishlist",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "productId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed from wishlist"
+          }
+        }
+      }
+    },
+    "/media/upload": {
+      "post": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Request pre-signed URL for any media upload (avatar, review image)",
+        "operationId": "requestMediaUpload",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "purpose",
+                  "content_type",
+                  "size_bytes"
+                ],
+                "properties": {
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "avatar",
+                      "review_image"
+                    ]
+                  },
+                  "content_type": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/webp"
+                    ]
+                  },
+                  "size_bytes": {
+                    "type": "integer",
+                    "maximum": 10485760,
+                    "description": "Max 10MB for non-product media"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pre-signed upload URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignedUploadResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/upload/{uploadId}/status": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Check image processing status after upload",
+        "operationId": "getUploadStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "uploadId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Processing status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageProcessingStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Get in-app notification history",
+        "operationId": "listNotifications",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "unread_only",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notification list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/UUID"
+                          },
+                          "type": {
+                            "type": "string",
+                            "example": "ORDER_SHIPPED"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "is_read": {
+                            "type": "boolean"
+                          },
+                          "created_at": {
+                            "$ref": "#/components/schemas/Timestamp"
+                          }
+                        }
+                      }
+                    },
+                    "unread_count": {
+                      "type": "integer"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/read-all": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Mark all notifications as read",
+        "operationId": "markAllRead",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "All marked as read"
+          }
+        }
+      }
+    },
+    "/notifications/preferences": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Get notification preferences",
+        "operationId": "getNotificationPrefs",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current preferences"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Update notification preferences",
+        "operationId": "updateNotificationPrefs",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "push_enabled": {
+                    "type": "boolean"
+                  },
+                  "sms_enabled": {
+                    "type": "boolean"
+                  },
+                  "email_enabled": {
+                    "type": "boolean"
+                  },
+                  "order_updates": {
+                    "type": "boolean"
+                  },
+                  "promotions": {
+                    "type": "boolean"
+                  },
+                  "restock_alerts": {
+                    "type": "boolean"
+                  },
+                  "price_drops": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Preferences updated"
+          }
+        }
+      }
+    },
+    "/notifications/push-token": {
+      "put": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Register or update device push token",
+        "operationId": "updatePushToken",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "platform"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "FCM (Android) or APNs (iOS) device token"
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "ios",
+                      "android"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token registered"
+          }
+        }
+      }
+    },
+    "/vendors/apply": {
+      "post": {
+        "tags": [
+          "Vendors"
+        ],
+        "summary": "Apply to become a vendor",
+        "operationId": "applyVendor",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "business_name",
+                  "business_type",
+                  "country"
+                ],
+                "properties": {
+                  "business_name": {
+                    "type": "string"
+                  },
+                  "business_type": {
+                    "type": "string",
+                    "enum": [
+                      "individual",
+                      "company"
+                    ]
+                  },
+                  "country": {
+                    "type": "string",
+                    "description": "ISO 3166-1 alpha-2"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "website": {
+                    "type": "string",
+                    "format": "uri",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Application submitted for review"
+          }
+        }
+      }
+    },
+    "/vendors/me": {
+      "get": {
+        "tags": [
+          "Vendors"
+        ],
+        "summary": "Get vendor profile and stats",
+        "operationId": "getVendorProfile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor profile with performance stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Vendor"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vendors/me/products": {
+      "get": {
+        "tags": [
+          "Vendors"
+        ],
+        "summary": "List vendor's own products",
+        "operationId": "listVendorProducts",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "active",
+                "archived"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor's products",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductDetail"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vendors/me/orders": {
+      "get": {
+        "tags": [
+          "Vendors"
+        ],
+        "summary": "List orders containing vendor's products",
+        "operationId": "listVendorOrders",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/OrderStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Orders for vendor's products"
+          }
+        }
+      }
+    },
+    "/vendors/me/earnings": {
+      "get": {
+        "tags": [
+          "Vendors"
+        ],
+        "summary": "Get earnings and settlement history",
+        "operationId": "getVendorEarnings",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Earnings summary and settlement history"
+          }
+        }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List all users",
+        "operationId": "adminListUsers",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search by name, email, or phone"
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "customer",
+                "vendor",
+                "admin"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "suspended",
+                "pending_verification"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Users list"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/suspend": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Suspend a user account",
+        "operationId": "suspendUser",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User suspended"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/admin/vendors/{vendorId}/approve": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Approve vendor application",
+        "operationId": "approveVendor",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "vendorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UUID"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commission_rate": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Override default commission rate"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Vendor approved"
+          }
+        }
+      }
+    },
+    "/admin/analytics/dashboard": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get real-time dashboard metrics",
+        "operationId": "getDashboard",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dashboard KPIs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "gmv_today": {
+                      "$ref": "#/components/schemas/Money"
+                    },
+                    "gmv_this_month": {
+                      "$ref": "#/components/schemas/Money"
+                    },
+                    "orders_today": {
+                      "type": "integer"
+                    },
+                    "active_users_now": {
+                      "type": "integer"
+                    },
+                    "conversion_rate": {
+                      "type": "number",
+                      "format": "double",
+                      "description": "Percentage"
+                    },
+                    "top_products": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    },
+                    "payment_breakdown": {
+                      "type": "object",
+                      "description": "Revenue split by payment provider"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

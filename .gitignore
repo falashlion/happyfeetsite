@@ -1,0 +1,32 @@
+# Dependencies
+node_modules
+
+# Build output
+.next
+dist
+tsconfig.tsbuildinfo
+backend/happyfeet-api
+backend/happyfeet-migrate
+coverage.out
+coverage.html
+
+# Local process state (make dev)
+.run
+
+# Environment — only *.example files are committed.
+# The negation must come last, and note `.env.*` alone would also swallow
+# `.env.example`, which is why it is re-included explicitly.
+.env
+.env.*
+!.env.example
+!.env.prod.example
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
+*.swp
+
+# Deploy
+.vercel

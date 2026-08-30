@@ -1,0 +1,10 @@
+.env
+.env.local
+.env*.local
+happyfeet-api
+happyfeet-migrate
+coverage.out
+coverage.html
+.DS_Store
+Dockerfile
+.dockerignore

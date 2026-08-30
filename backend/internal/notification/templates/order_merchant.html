@@ -1,0 +1,111 @@
+{{define "body"}}
+{{$o := .Order}}
+
+<!-- ── Amount to collect ─────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:32px 40px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf3df;border:1px solid #d9be76;border-radius:12px;">
+      <tr>
+        <td align="center" style="padding:24px 22px;">
+          <div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:#8c7034;font-weight:700;">Collect on delivery</div>
+          <div style="font-family:Georgia,'Times New Roman',serif;font-size:36px;color:#0e1b3a;padding-top:8px;letter-spacing:-.01em;">{{$o.Total}}</div>
+          <div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:12px;color:#4f3f1c;padding-top:8px;line-height:1.6;">{{$o.PaymentNote}}</div>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+
+<!-- ── Order meta ────────────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:30px 40px 0;">
+    {{template "sectionLabel" "Order"}}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;color:#15161b;">
+      <tr>
+        <td style="padding:5px 0;color:#6e727f;width:44%;">Order number</td>
+        <td align="right" style="padding:5px 0;font-family:'SF Mono',Consolas,monospace;font-size:13px;letter-spacing:.04em;">{{$o.OrderNumber}}</td>
+      </tr>
+      <tr>
+        <td style="padding:5px 0;color:#6e727f;">Placed</td>
+        <td align="right" style="padding:5px 0;">{{$o.PlacedAt}}</td>
+      </tr>
+      <tr>
+        <td style="padding:5px 0;color:#6e727f;">Payment</td>
+        <td align="right" style="padding:5px 0;font-weight:600;">{{$o.PaymentLabel}}</td>
+      </tr>
+      <tr>
+        <td style="padding:5px 0;color:#6e727f;">Delivery</td>
+        <td align="right" style="padding:5px 0;">{{$o.DeliveryLabel}}</td>
+      </tr>
+      <tr>
+        <td style="padding:5px 0;color:#6e727f;">Items</td>
+        <td align="right" style="padding:5px 0;">{{$o.ItemCount}}</td>
+      </tr>
+    </table>
+  </td>
+</tr>
+
+<!-- ── Customer ──────────────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:30px 40px 0;">
+    {{template "sectionLabel" "Customer"}}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fbf8f1;border:1px solid rgba(20,22,27,.08);border-radius:12px;">
+      <tr>
+        <td style="padding:20px 22px;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;line-height:1.75;color:#15161b;">
+          <div style="font-family:Georgia,'Times New Roman',serif;font-size:19px;padding-bottom:6px;">{{$o.CustomerName}}</div>
+          {{if $o.CustomerPhone}}<div><a href="tel:{{$o.CustomerPhone}}" style="color:#15234a;text-decoration:none;font-family:'SF Mono',Consolas,monospace;">{{$o.CustomerPhone}}</a></div>{{end}}
+          {{if $o.CustomerEmail}}<div><a href="mailto:{{$o.CustomerEmail}}" style="color:#15234a;text-decoration:none;">{{$o.CustomerEmail}}</a></div>{{end}}
+          <div style="height:1px;background:rgba(20,22,27,.08);margin:14px 0;font-size:0;line-height:0;">&nbsp;</div>
+          <div style="font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:#6e727f;font-weight:700;padding-bottom:6px;">Deliver to</div>
+          {{range $o.AddressLines}}<div style="color:#4a4d58;">{{.}}</div>{{end}}
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+
+<!-- ── WhatsApp CTA ──────────────────────────────────────────── -->
+{{if $o.MerchantWhatsAppLink}}
+<tr>
+  <td class="hf-pad" style="padding:26px 40px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="hf-btn">
+      <tr>
+        <td align="center" bgcolor="#25D366" style="border-radius:8px;">
+          <a href="{{$o.MerchantWhatsAppLink}}"
+             style="display:inline-block;padding:16px 30px;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:.02em;color:#0a1330;text-decoration:none;border-radius:8px;">
+            Message {{$o.CustomerName}} on WhatsApp
+          </a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:10px 0 0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:11px;color:#6e727f;text-align:center;line-height:1.6;">
+      Opens a chat with the delivery confirmation already written for you.
+    </p>
+  </td>
+</tr>
+{{end}}
+
+<!-- ── Items ─────────────────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:30px 40px 0;">
+    {{template "sectionLabel" "To prepare"}}
+    {{template "itemsTable" $o}}
+  </td>
+</tr>
+
+<!-- ── Next steps ────────────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:30px 40px 38px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f7fb;border-radius:12px;">
+      <tr>
+        <td style="padding:20px 22px;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:12px;line-height:1.9;color:#4a4d58;">
+          <strong style="color:#0e1b3a;letter-spacing:.02em;">Next steps</strong><br>
+          1. Confirm the address and delivery window with the customer.<br>
+          2. Pick and pack the {{$o.ItemCount}} item{{if ne $o.ItemCount 1}}s{{end}} listed above.<br>
+          3. Collect <strong style="color:#0e1b3a;">{{$o.Total}}</strong> in cash at handover, then mark the order paid.
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+{{end}}

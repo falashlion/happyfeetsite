@@ -1,0 +1,243 @@
+# ══════════════════════════════════════════════════════════════════════════
+# Deploy to production.
+#
+#   CI must pass  →  build & publish images  →  migrate  →  roll containers
+#
+# Images go to GitHub Container Registry (free for public repos, and included
+# in the Actions storage allowance for private ones). The server pulls them; no
+# building happens on the production host, so a deploy cannot exhaust its CPU
+# or leave a half-built image behind.
+# ══════════════════════════════════════════════════════════════════════════
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_migrations:
+        description: "Skip database migrations (use only to re-deploy an unchanged schema)"
+        type: boolean
+        default: false
+
+concurrency:
+  # Never let two deploys touch the server at once. Do NOT cancel in progress —
+  # interrupting a migration is how you get a half-applied schema.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # ── Gate ──────────────────────────────────────────────────────────────
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # ── Build and publish ─────────────────────────────────────────────────
+  build:
+    needs: ci
+    runs-on: ubuntu-latest
+    outputs:
+      api_image: ${{ steps.meta.outputs.api_image }}
+      web_image: ${{ steps.meta.outputs.web_image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        run: |
+          # Tag by commit SHA, never by :latest. Every deploy is then a
+          # specific, re-deployable artifact and rollback is just an old tag.
+          sha="${GITHUB_SHA::12}"
+          base=$(echo "${{ env.IMAGE_BASE }}" | tr '[:upper:]' '[:lower:]')
+          echo "api_image=$base/api:$sha" >> "$GITHUB_OUTPUT"
+          echo "web_image=$base/web:$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push API
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          # arm64 is what Oracle Ampere runs; amd64 keeps the image usable on
+          # any x86 host you might move to.
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.api_image }}
+          build-args: VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push storefront
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.web_image }}
+          # NEXT_PUBLIC_* is compiled into the browser bundle, so these must be
+          # the real production values at BUILD time — not runtime env.
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_STORE_NAME=${{ vars.NEXT_PUBLIC_STORE_NAME }}
+            NEXT_PUBLIC_STORE_WHATSAPP_NUMBER=${{ vars.NEXT_PUBLIC_STORE_WHATSAPP_NUMBER }}
+            NEXT_PUBLIC_STORE_WHATSAPP_DISPLAY=${{ vars.NEXT_PUBLIC_STORE_WHATSAPP_DISPLAY }}
+            NEXT_PUBLIC_STORE_SUPPORT_EMAIL=${{ vars.NEXT_PUBLIC_STORE_SUPPORT_EMAIL }}
+            NEXT_PUBLIC_STORE_ADDRESS=${{ vars.NEXT_PUBLIC_STORE_ADDRESS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Release ───────────────────────────────────────────────────────────
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://www.${{ vars.DOMAIN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open an SSH session to the server
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust the host key
+        # Pinned from a secret rather than StrictHostKeyChecking=no, which would
+        # accept whatever answers on that IP — including an impostor.
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Ship the compose files
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          scp -P "${{ secrets.DEPLOY_PORT || 22 }}" \
+            deploy/docker-compose.prod.yml \
+            deploy/Caddyfile \
+            deploy/backup.sh \
+            backend/migrations/seed_products.sql \
+            "$USER@$HOST:/opt/happyfeet/"
+
+      - name: Migrate, then roll
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          API_IMAGE: ${{ needs.build.outputs.api_image }}
+          WEB_IMAGE: ${{ needs.build.outputs.web_image }}
+          SKIP_MIGRATIONS: ${{ inputs.skip_migrations }}
+        run: |
+          ssh -p "${{ secrets.DEPLOY_PORT || 22 }}" "$USER@$HOST" \
+            API_IMAGE="$API_IMAGE" WEB_IMAGE="$WEB_IMAGE" \
+            SKIP_MIGRATIONS="$SKIP_MIGRATIONS" \
+            GHCR_USER="${{ github.actor }}" GHCR_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/happyfeet
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          # Record what is running now, so a failure can roll straight back.
+          PREV_API=$(grep -E '^API_IMAGE=' .env.prod 2>/dev/null | cut -d= -f2- || true)
+          PREV_WEB=$(grep -E '^WEB_IMAGE=' .env.prod 2>/dev/null | cut -d= -f2- || true)
+          echo "current: api=${PREV_API:-none} web=${PREV_WEB:-none}"
+
+          # .env.prod holds the secrets and lives ONLY on the server — it is
+          # never in git and never leaves the host. Rewrite just the image pins.
+          touch .env.prod
+          grep -vE '^(API_IMAGE|WEB_IMAGE)=' .env.prod > .env.prod.next || true
+          printf 'API_IMAGE=%s\nWEB_IMAGE=%s\n' "$API_IMAGE" "$WEB_IMAGE" >> .env.prod.next
+          mv .env.prod.next .env.prod
+          chmod 600 .env.prod
+
+          compose() { docker compose -f docker-compose.prod.yml --env-file .env.prod "$@"; }
+
+          echo "── pulling images ──"
+          compose pull api web
+
+          echo "── ensuring datastores are up ──"
+          compose up -d postgres redis
+
+          if [ "${SKIP_MIGRATIONS}" != "true" ]; then
+            echo "── migrating ──"
+            # Migrations run BEFORE the new code starts. Keep them additive
+            # (add columns, don't drop) so the old release survives the gap
+            # between this step and the container roll.
+            if ! compose --profile tools run --rm migrate; then
+              echo "::error::migration failed — nothing was rolled, previous release still serving"
+              exit 1
+            fi
+          else
+            echo "── migrations skipped by request ──"
+          fi
+
+          echo "── rolling app containers ──"
+          compose up -d --remove-orphans
+
+          echo "── waiting for health ──"
+          # Ask Docker, not curl-through-Caddy: Caddy answers port 80 with a
+          # 308 redirect to HTTPS, which `curl -f` treats as success — so an
+          # HTTP probe here would go green against a completely dead app.
+          ok=false
+          for i in $(seq 1 40); do
+            api_state=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                        happyfeet-api-1 2>/dev/null || echo missing)
+            web_state=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                        happyfeet-web-1 2>/dev/null || echo missing)
+            echo "  api=$api_state web=$web_state"
+            if [ "$api_state" = healthy ] && { [ "$web_state" = healthy ] || [ "$web_state" = running ]; }; then
+              ok=true; break
+            fi
+            case "$api_state$web_state" in *missing*|*exited*) sleep 3 ;; *) sleep 3 ;; esac
+          done
+
+          if [ "$ok" != true ]; then
+            echo "── container logs ──"
+            compose logs --tail 40 api web || true
+          fi
+
+          if [ "$ok" != true ]; then
+            echo "::error::new release did not become healthy"
+            if [ -n "$PREV_API" ] && [ -n "$PREV_WEB" ]; then
+              echo "── rolling back to $PREV_API / $PREV_WEB ──"
+              grep -vE '^(API_IMAGE|WEB_IMAGE)=' .env.prod > .env.prod.next || true
+              printf 'API_IMAGE=%s\nWEB_IMAGE=%s\n' "$PREV_API" "$PREV_WEB" >> .env.prod.next
+              mv .env.prod.next .env.prod
+              compose up -d
+              echo "rolled back — note the DATABASE MIGRATION WAS NOT REVERSED"
+            fi
+            exit 1
+          fi
+
+          echo "── pruning old images (keeping the last few) ──"
+          docker image prune -af --filter "until=168h" >/dev/null 2>&1 || true
+          echo "✓ deployed api=$API_IMAGE web=$WEB_IMAGE"
+          REMOTE
+
+      - name: Smoke-test the public site
+        run: |
+          domain="www.${{ vars.DOMAIN }}"
+          echo "── https://$domain ──"
+          curl -fsS --max-time 20 "https://$domain/healthz" | head -c 200; echo
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$domain/")
+          echo "storefront: HTTP $code"
+          [ "$code" = "200" ] || { echo "::error::storefront returned $code"; exit 1; }
+          # The catalogue proves the API and database are wired, not just alive.
+          curl -fsS --max-time 20 "https://$domain/api/v1/products?limit=1" \
+            | grep -q '"data"' || { echo "::error::product API returned no data"; exit 1; }
+          echo "✓ production is serving"
