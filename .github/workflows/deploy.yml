@@ -178,7 +178,13 @@ jobs:
             # Migrations run BEFORE the new code starts. Keep them additive
             # (add columns, don't drop) so the old release survives the gap
             # between this step and the container roll.
-            if ! compose --profile tools run --rm migrate; then
+            #
+            # -T and </dev/null matter: this whole script arrives on the remote
+            # as a heredoc on stdin, and `compose run` attaches stdin by
+            # default. Without them the migrate container swallows the rest of
+            # the script, bash reaches EOF and exits 0 — the step goes green
+            # having never rolled a single container.
+            if ! compose --profile tools run --rm -T migrate </dev/null; then
               echo "::error::migration failed — nothing was rolled, previous release still serving"
               exit 1
             fi
