@@ -180,7 +180,7 @@ func TestRenderOrderEmailsMinimalOrder(t *testing.T) {
 func TestSendOrderPlacedIsNoopWhenDisabled(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Store.OwnerEmail = "owner@example.com"
-	svc, err := NewEmailService(mailer.New(cfg.SMTP, zerolog.Nop()), cfg, zerolog.Nop())
+	svc, err := NewEmailService(mailer.NewSingle(cfg.SMTP, zerolog.Nop()), cfg, zerolog.Nop())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func newTestService(t *testing.T) *EmailService {
 		Address:         "Bonapriso, Douala",
 		Hours:           "Mon–Sat, 08:00–20:00 WAT",
 	}
-	svc, err := NewEmailService(mailer.New(cfg.SMTP, zerolog.Nop()), cfg, zerolog.Nop())
+	svc, err := NewEmailService(mailer.NewSingle(cfg.SMTP, zerolog.Nop()), cfg, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("NewEmailService: %v", err)
 	}

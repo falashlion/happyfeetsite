@@ -46,9 +46,19 @@ if command -v ufw >/dev/null 2>&1; then
 	sudo ufw --force enable >/dev/null 2>&1 || true
 fi
 if sudo iptables -L INPUT -n 2>/dev/null | grep -q REJECT; then
-	sudo iptables -I INPUT 6 -p tcp --dport 80  -j ACCEPT || true
-	sudo iptables -I INPUT 6 -p tcp --dport 443 -j ACCEPT || true
-	sudo iptables -I INPUT 6 -p udp --dport 443 -j ACCEPT || true
+	# The ACCEPTs must sit ABOVE the catch-all REJECT or they are never reached.
+	# Its position varies between images, so find it rather than assuming a slot.
+	# Drop any stale copies first — an earlier run may have left them below it.
+	for rule in "-p tcp --dport 80" "-p tcp --dport 443" "-p udp --dport 443"; do
+		while sudo iptables -C INPUT $rule -j ACCEPT 2>/dev/null; do
+			sudo iptables -D INPUT $rule -j ACCEPT || break
+		done
+	done
+	reject_at=$(sudo iptables -L INPUT -n --line-numbers 2>/dev/null \
+		| awk '$2 == "REJECT" { print $1; exit }')
+	for rule in "-p tcp --dport 80" "-p tcp --dport 443" "-p udp --dport 443"; do
+		sudo iptables -I INPUT "$reject_at" $rule -j ACCEPT || true
+	done
 	sudo netfilter-persistent save >/dev/null 2>&1 \
 		|| sudo sh -c 'iptables-save > /etc/iptables/rules.v4' 2>/dev/null || true
 	echo "iptables updated"

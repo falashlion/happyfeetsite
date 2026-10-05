@@ -76,13 +76,64 @@ func healthcheck() int {
 	return 0
 }
 
+// mailtest proves each relay works on its own, which a normal send cannot:
+// with failover in play, a broken second provider is invisible as long as the
+// first one is healthy. Run it on the server after filling in .env.prod:
+//
+//	docker compose -f docker-compose.prod.yml --env-file .env.prod \
+//	  run --rm --no-deps api -mailtest you@example.com
+func mailtest(to string) int {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	log := logger.Setup(cfg.App.Env, cfg.App.Version, true)
+	mail := mailer.New(cfg.Mail, log)
+	if !mail.Enabled() {
+		fmt.Fprintln(os.Stderr, "mailtest: no relay configured — set SMTP_HOST")
+		return 1
+	}
+
+	failed := 0
+	for _, u := range mail.Providers() {
+		fmt.Printf("── %s (%s:%d, from %s)\n", u.Name, u.Host, u.Port, u.From)
+		err := mail.SendVia(u.Name, mailer.Message{
+			To:      []string{to},
+			Subject: fmt.Sprintf("%s relay test — %s", cfg.Store.Name, u.Name),
+			Text: fmt.Sprintf("Sent through %s (%s:%d) at %s.\n\nIf you are reading this, that relay is working.",
+				u.Name, u.Host, u.Port, time.Now().Format(time.RFC1123)),
+			HTML: fmt.Sprintf(
+				`<p>Sent through <strong>%s</strong> (%s:%d) at %s.</p><p>If you are reading this, that relay is working.</p>`,
+				u.Name, u.Host, u.Port, time.Now().Format(time.RFC1123)),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "   FAILED: %v\n", err)
+			failed++
+			continue
+		}
+		fmt.Printf("   sent to %s\n", to)
+	}
+
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d of %d relays failed.\n", failed, len(mail.Providers()))
+		return 1
+	}
+	fmt.Printf("\nAll %d relay(s) delivered. Check the inbox — and the spam folder.\n", len(mail.Providers()))
+	return 0
+}
+
 func main() {
 	// Must be handled before any config, database or Redis work: the probe runs
 	// as a separate short-lived process many times a minute.
 	probe := flag.Bool("healthcheck", false, "probe the running server and exit 0 (ready) or 1")
+	mailTest := flag.String("mailtest", "", "send a test message to this address through every configured relay, then exit")
 	flag.Parse()
 	if *probe {
 		os.Exit(healthcheck())
+	}
+	if *mailTest != "" {
+		os.Exit(mailtest(*mailTest))
 	}
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -144,7 +195,7 @@ func main() {
 
 	// Transactional email. A missing relay is a warning, not a fatal error —
 	// the storefront stays fully functional without it.
-	mail := mailer.New(cfg.SMTP, log)
+	mail := mailer.New(cfg.Mail, log)
 	emailSvc, err := notification.NewEmailService(mail, cfg, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("email templates failed to parse")
@@ -155,8 +206,15 @@ func main() {
 	case cfg.Store.OwnerEmail == "":
 		log.Warn().Msg("STORE_OWNER_EMAIL is unset — merchant order alerts will not be sent")
 	default:
+		// Name every relay at boot. With two providers configured, this line is
+		// how you confirm the second one was actually picked up.
+		relays := make([]string, 0, len(cfg.Mail.Providers))
+		for _, u := range mail.Providers() {
+			relays = append(relays, fmt.Sprintf("%s(%s:%d)", u.Name, u.Host, u.Port))
+		}
 		log.Info().
-			Str("relay", fmt.Sprintf("%s:%d", cfg.SMTP.Host, cfg.SMTP.Port)).
+			Strs("relays", relays).
+			Str("strategy", cfg.Mail.Strategy).
 			Str("owner", cfg.Store.OwnerEmail).
 			Msg("Order email enabled")
 	}

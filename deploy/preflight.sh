@@ -86,6 +86,11 @@ cat <<'EOF'
     Server file       /opt/happyfeet/.env.prod  (chmod 600)
     Google Console    production origin added to the OAuth client
     DNS               A records for @ and www, "DNS only" until TLS is issued
+    Email relays      SMTP_* (Resend) and SMTP2_* (Brevo) in .env.prod, then
+                      prove BOTH from the server before launch:
+                        docker compose -f docker-compose.prod.yml \
+                          --env-file .env.prod run --rm --no-deps api \
+                          -mailtest you@example.com
 EOF
 
 printf '\n\033[1m%d passed · %d warnings · %d must fix\033[0m\n' "$pass" "$warn" "$fail"

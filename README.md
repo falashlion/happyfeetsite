@@ -126,8 +126,57 @@ SMTP_PASSWORD=<16-char app password>
 SMTP_FROM=falashcorp@gmail.com
 ```
 
-Restart the API. For production volume prefer a transactional provider (SES,
-Postmark, Resend) — Gmail rate-limits and will mark bulk sending as abuse.
+Restart the API. For production volume prefer a transactional provider — Gmail
+rate-limits and will mark bulk sending as abuse.
+
+### Two relays at once
+
+`SMTP2_*` (and `SMTP3_*`) add more relays. Two free tiers side by side send far
+more than either alone, and one provider's outage stops being the store's
+outage:
+
+```bash
+MAIL_STRATEGY=rotate                  # or: failover
+
+SMTP_HOST=smtp.resend.com             # Resend — 3,000/month free
+SMTP_PORT=587
+SMTP_USERNAME=resend                  # literally the word "resend"
+SMTP_PASSWORD=re_xxxxxxxx             # the API key
+SMTP_FROM=orders@yourdomain.cm        # must be on the domain verified in Resend
+SMTP_MONTHLY_LIMIT=3000
+
+SMTP2_HOST=smtp-relay.brevo.com       # Brevo — 300/day free
+SMTP2_PORT=587
+SMTP2_USERNAME=9a1b2c001@smtp-brevo.com
+SMTP2_PASSWORD=xsmtpsib-xxxxxxxx      # SMTP key, not the account password
+SMTP2_DAILY_LIMIT=300
+```
+
+| | |
+|---|---|
+| `rotate` (default) | round-robin — both allowances actually get used |
+| `failover` | stay on the primary; reach for the second only when it fails or is spent |
+
+Either way, a message one relay refuses is retried on the next before it is
+reported as failed, so a bad API key or a spent quota costs latency rather than
+an order alert. The `*_LIMIT` values are advisory: they are counted in memory
+(and forgotten on restart) and only decide which relay is *tried first* — the
+relay itself is the authority on whether it will accept the message.
+
+`SMTP2_FROM` / `SMTP2_FROM_NAME` default to the primary's. Set them only when
+the second provider has verified a different sending domain — each relay signs
+with its own `From`, because a provider damages or rejects a sender it has not
+verified.
+
+Verify every relay independently — with failover in play a broken second
+provider is otherwise invisible:
+
+```bash
+cd backend && go run ./cmd/api -mailtest you@example.com
+```
+
+It sends one message through *each* configured relay and reports per-relay
+success, naming the provider in the subject line.
 
 ---
 
@@ -209,6 +258,23 @@ on any route. Notable behaviour:
 Breakpoints live in `frontend/src/styles/globals.css`. Where a component's Tailwind
 utility and a CSS media query must agree — the header, notably — both are noted in
 comments; change them together.
+
+---
+
+## Deployment
+
+The whole stack runs on one Docker host behind Caddy, which terminates TLS and
+serves the API and the storefront from a single origin. Push to `main` and
+GitHub Actions runs the tests, builds both images, migrates, rolls the
+containers and rolls back on its own if the release will not come up healthy.
+
+**[deploy/DEPLOY.md](deploy/DEPLOY.md)** is the first-time runbook — Oracle
+instance to live storefront, in order, with the failure modes each step is
+guarding against. Before the first push:
+
+```bash
+bash deploy/preflight.sh
+```
 
 ---
 

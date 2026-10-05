@@ -17,6 +17,7 @@ type Config struct {
 	AWS     AWSConfig
 	Payment PaymentConfig
 	SMTP    SMTPConfig
+	Mail    MailConfig
 	Store   StoreConfig
 	OAuth   OAuthConfig
 }
@@ -110,17 +111,58 @@ type PaymentConfig struct {
 	StripeWebhookSecret string
 }
 
+// SMTPConfig is one relay. Several may be configured at once — see MailConfig.
 type SMTPConfig struct {
+	// Name labels the relay in logs and metrics ("resend", "brevo"). Derived
+	// from the host when not set explicitly.
+	Name     string
 	Host     string
 	Port     int
 	Username string
 	Password string
+	// From and FromName are per-relay because each provider will only accept a
+	// sender on a domain IT has verified — Resend and Brevo rarely agree.
 	From     string
 	FromName string
+	// DailyLimit and MonthlyLimit are the free-tier allowances (0 = unmetered).
+	// They are advisory: the mailer uses them to spread volume and to stop
+	// pushing at a relay that is spent. Exceeding one is not fatal — the relay
+	// rejects the message and delivery falls through to the next provider.
+	DailyLimit   int
+	MonthlyLimit int
+}
+
+// MailConfig holds every configured relay, in preference order.
+//
+// Two free tiers side by side (Resend 3,000/month, Brevo 300/day) send far
+// more than either alone, and a provider outage stops being an outage for the
+// store — the next relay in the list takes the message.
+type MailConfig struct {
+	// Strategy is "rotate" (round-robin, spreads volume across every relay and
+	// is what raises the ceiling) or "failover" (always prefer the first, use
+	// the rest only when it is failing or spent).
+	Strategy string
+	// Providers is the ordered list, primary first. Empty means email is off.
+	Providers []SMTPConfig
 }
 
 func Load() (*Config, error) {
 	LoadDotenv(".")
+
+	// The primary relay keeps the unprefixed names, so every existing
+	// deployment and the local Mailpit default keep working untouched.
+	primarySMTP := SMTPConfig{
+		Name:         getEnv("SMTP_NAME", ""),
+		Host:         getEnv("SMTP_HOST", "localhost"),
+		Port:         getInt("SMTP_PORT", 1025),
+		Username:     getEnv("SMTP_USERNAME", ""),
+		Password:     getEnv("SMTP_PASSWORD", ""),
+		From:         getEnv("SMTP_FROM", "noreply@happyfeet.com"),
+		FromName:     getEnv("SMTP_FROM_NAME", "HappyFeet"),
+		DailyLimit:   getInt("SMTP_DAILY_LIMIT", 0),
+		MonthlyLimit: getInt("SMTP_MONTHLY_LIMIT", 0),
+	}
+
 	return &Config{
 		App: AppConfig{
 			Name:        getEnv("APP_NAME", "happyfeet-api"),
@@ -180,13 +222,10 @@ func Load() (*Config, error) {
 			StripeSecretKey:     getEnv("STRIPE_SECRET_KEY", ""),
 			StripeWebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET", ""),
 		},
-		SMTP: SMTPConfig{
-			Host:     getEnv("SMTP_HOST", "localhost"),
-			Port:     getInt("SMTP_PORT", 1025),
-			Username: getEnv("SMTP_USERNAME", ""),
-			Password: getEnv("SMTP_PASSWORD", ""),
-			From:     getEnv("SMTP_FROM", "noreply@happyfeet.com"),
-			FromName: getEnv("SMTP_FROM_NAME", "HappyFeet"),
+		SMTP: primarySMTP,
+		Mail: MailConfig{
+			Strategy:  strings.ToLower(getEnv("MAIL_STRATEGY", "rotate")),
+			Providers: smtpProviders(primarySMTP),
 		},
 		Store: StoreConfig{
 			Name:            getEnv("STORE_NAME", "Happy Feet"),
@@ -216,6 +255,54 @@ func splitList(raw string) []string {
 		}
 	}
 	return out
+}
+
+// smtpProviders collects every configured relay in preference order: the
+// primary from the unprefixed SMTP_* names, then SMTP2_* and SMTP3_*.
+//
+// A slot with no host is skipped, so adding a second provider is one block of
+// environment variables and no code change.
+func smtpProviders(primary SMTPConfig) []SMTPConfig {
+	providers := make([]SMTPConfig, 0, 3)
+	if primary.Host != "" {
+		primary.Name = smtpName(primary.Name, primary.Host)
+		providers = append(providers, primary)
+	}
+
+	for _, prefix := range []string{"SMTP2", "SMTP3"} {
+		host := os.Getenv(prefix + "_HOST")
+		if strings.TrimSpace(host) == "" {
+			continue
+		}
+		p := SMTPConfig{
+			Name:     smtpName(os.Getenv(prefix+"_NAME"), host),
+			Host:     host,
+			Port:     getInt(prefix+"_PORT", 587),
+			Username: getEnv(prefix+"_USERNAME", ""),
+			Password: getEnv(prefix+"_PASSWORD", ""),
+			// A secondary relay almost always shares the sender identity with
+			// the primary, so fall back to it rather than demanding a repeat.
+			From:         getEnv(prefix+"_FROM", primary.From),
+			FromName:     getEnv(prefix+"_FROM_NAME", primary.FromName),
+			DailyLimit:   getInt(prefix+"_DAILY_LIMIT", 0),
+			MonthlyLimit: getInt(prefix+"_MONTHLY_LIMIT", 0),
+		}
+		providers = append(providers, p)
+	}
+	return providers
+}
+
+// smtpName keeps an explicit label, otherwise takes the registrable-looking
+// label out of the host: smtp.resend.com → resend, smtp-relay.brevo.com → brevo.
+func smtpName(explicit, host string) string {
+	if explicit = strings.TrimSpace(explicit); explicit != "" {
+		return explicit
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return host
 }
 
 // normalizeWhatsApp strips everything a wa.me link cannot carry: the leading
