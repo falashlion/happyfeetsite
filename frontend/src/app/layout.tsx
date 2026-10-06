@@ -14,7 +14,13 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s · ${t("common.brand")}`,
     },
     description: t("footer.about_blurb"),
-    metadataBase: new URL("https://happyfeet.example"),
+    // Absolute URLs for Open Graph and icons are resolved against this. The
+    // placeholder it replaced meant every shared link advertised a domain that
+    // does not exist. NEXT_PUBLIC_SITE_URL is inlined at build time; the
+    // fallback keeps local development working.
+    metadataBase: new URL(
+      process.env.NEXT_PUBLIC_SITE_URL?.trim() || "http://localhost:3000",
+    ),
     openGraph: {
       title: t("common.brand"),
       description: t("common.tagline"),

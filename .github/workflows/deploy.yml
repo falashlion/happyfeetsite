@@ -96,6 +96,7 @@ jobs:
             NEXT_PUBLIC_STORE_WHATSAPP_DISPLAY=${{ vars.NEXT_PUBLIC_STORE_WHATSAPP_DISPLAY }}
             NEXT_PUBLIC_STORE_SUPPORT_EMAIL=${{ vars.NEXT_PUBLIC_STORE_SUPPORT_EMAIL }}
             NEXT_PUBLIC_STORE_ADDRESS=${{ vars.NEXT_PUBLIC_STORE_ADDRESS }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
