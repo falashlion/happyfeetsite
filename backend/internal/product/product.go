@@ -402,6 +402,164 @@ func (r *Repository) Archive(ctx context.Context, id, vendorID string) error {
 	return nil
 }
 
+// UpdateParams carries only the fields an edit may touch. Nil means "leave
+// alone", which is what lets the admin UI send a single changed field rather
+// than having to round-trip the whole product and risk clobbering a concurrent
+// edit with stale values.
+type UpdateParams struct {
+	Name        *string
+	CategoryID  *string
+	BrandID     *string
+	Description *string
+	BasePrice   *float64
+	Currency    *string
+	Status      *string
+	Tags        *[]string
+}
+
+// Update applies the non-nil fields. The slug deliberately does not follow a
+// rename: it is in published URLs, and silently breaking them is worse than a
+// slug that no longer matches the title.
+func (r *Repository) Update(ctx context.Context, id string, p UpdateParams) error {
+	set := []string{}
+	args := []any{}
+	add := func(frag string, v any) {
+		args = append(args, v)
+		set = append(set, fmt.Sprintf("%s=$%d", frag, len(args)))
+	}
+
+	if p.Name != nil {
+		add("name", *p.Name)
+	}
+	if p.CategoryID != nil {
+		add("category_id", *p.CategoryID)
+	}
+	if p.BrandID != nil {
+		add("brand_id", *p.BrandID)
+	}
+	if p.Description != nil {
+		add("description", *p.Description)
+	}
+	if p.BasePrice != nil {
+		add("base_price", *p.BasePrice)
+	}
+	if p.Currency != nil {
+		add("currency", *p.Currency)
+	}
+	if p.Status != nil {
+		add("status", *p.Status)
+	}
+	if p.Tags != nil {
+		add("tags", *p.Tags)
+	}
+	if len(set) == 0 {
+		return nil // nothing asked for; not an error
+	}
+
+	args = append(args, id)
+	q := fmt.Sprintf("UPDATE products SET %s,updated_at=NOW() WHERE id=$%d",
+		strings.Join(set, ","), len(args))
+
+	res, err := r.db.Exec(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// AddImageParams is one Cloudinary asset. Only the public ID is required —
+// every rendition is derived from it.
+type AddImageParams struct {
+	PublicID  string
+	Format    string
+	SizeBytes int
+	Width     int
+	Height    int
+	IsPrimary bool
+	SortOrder int
+}
+
+// AddImage stores the five renditions Cloudinary will serve for this asset.
+// Making one image primary demotes the others in the same transaction, so a
+// product can never end up with two primaries or none.
+func (r *Repository) AddImage(ctx context.Context, productID, cloudName string, p AddImageParams) (string, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1)`, productID).Scan(&exists); err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", ErrNotFound
+	}
+
+	if p.IsPrimary {
+		if _, err := tx.Exec(ctx, `UPDATE product_images SET is_primary=false WHERE product_id=$1`, productID); err != nil {
+			return "", err
+		}
+	}
+
+	u := CloudinaryRenditions(cloudName, p.PublicID)
+	var id string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO product_images
+			(product_id,url_original,url_large,url_medium,url_small,url_thumbnail,
+			 format,size_bytes,width_px,height_px,is_primary,sort_order,processing_status)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'complete') RETURNING id`,
+		productID, u.Original, u.Large, u.Medium, u.Small, u.Thumbnail,
+		p.Format, p.SizeBytes, p.Width, p.Height, p.IsPrimary, p.SortOrder,
+	).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, tx.Commit(ctx)
+}
+
+func (r *Repository) DeleteImage(ctx context.Context, productID, imageID string) error {
+	res, err := r.db.Exec(ctx, `DELETE FROM product_images WHERE id=$1 AND product_id=$2`, imageID, productID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Renditions are the fixed sizes product_images stores, matching the column
+// comments in the schema (1200/800/400/150).
+type Renditions struct {
+	Original  string
+	Large     string
+	Medium    string
+	Small     string
+	Thumbnail string
+}
+
+// CloudinaryRenditions derives every size from one public ID using Cloudinary's
+// URL transformations, so the resizing happens on their CDN rather than on this
+// server. f_auto/q_auto let Cloudinary pick AVIF or WebP per browser.
+func CloudinaryRenditions(cloudName, publicID string) Renditions {
+	base := "https://res.cloudinary.com/" + cloudName + "/image/upload"
+	at := func(transform string) string {
+		return base + "/" + transform + "/" + publicID
+	}
+	return Renditions{
+		Original:  at("f_auto,q_auto"),
+		Large:     at("w_1200,h_1200,c_limit,f_auto,q_auto"),
+		Medium:    at("w_800,h_800,c_limit,f_auto,q_auto"),
+		Small:     at("w_400,h_400,c_limit,f_auto,q_auto"),
+		Thumbnail: at("w_150,h_150,c_fill,g_auto,f_auto,q_auto"),
+	}
+}
+
 func (r *Repository) ListCategories(ctx context.Context) ([]*Category, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT c.id,c.parent_id,c.name,c.slug,c.icon_url,
@@ -462,9 +620,17 @@ func (r *Repository) ListBrands(ctx context.Context, search string) ([]*Brand, e
 
 // ── handler ───────────────────────────────────────────────────────────────────
 
-type Handler struct{ repo *Repository }
+type Handler struct {
+	repo *Repository
+	// cloudName is the Cloudinary account that serves product imagery. Empty
+	// when uploads are unconfigured, in which case attaching an image is
+	// refused rather than writing URLs that would 404.
+	cloudName string
+}
 
-func NewHandler(repo *Repository) *Handler { return &Handler{repo} }
+func NewHandler(repo *Repository, cloudName string) *Handler {
+	return &Handler{repo: repo, cloudName: cloudName}
+}
 
 // ListProducts godoc
 // @Summary      List products
@@ -746,17 +912,17 @@ func fmtList(products []*Product) []map[string]any {
 	out := make([]map[string]any, 0, len(products))
 	for _, p := range products {
 		out = append(out, map[string]any{
-			"id":           p.ID,
-			"name":         p.Name,
-			"slug":         p.Slug,
-			"brand":        p.BrandName,
-			"category":     p.CategoryName,
-			"base_price":   p.BasePrice,
-			"final_price":  p.FinalPrice,
-			"currency":     p.Currency,
-			"rating_avg":   p.RatingAvg,
-			"rating_count": p.RatingCount,
-			"in_stock":     p.InStock,
+			"id":            p.ID,
+			"name":          p.Name,
+			"slug":          p.Slug,
+			"brand":         p.BrandName,
+			"category":      p.CategoryName,
+			"base_price":    p.BasePrice,
+			"final_price":   p.FinalPrice,
+			"currency":      p.Currency,
+			"rating_avg":    p.RatingAvg,
+			"rating_count":  p.RatingCount,
+			"in_stock":      p.InStock,
 			"primary_image": primaryImg(p.Images),
 		})
 	}
@@ -832,4 +998,149 @@ func qInt(s string, def int) int {
 		return v
 	}
 	return def
+}
+
+// ── admin write handlers ──────────────────────────────────────────────────────
+
+type updateProductReq struct {
+	Name        *string   `json:"name"        validate:"omitempty,max=255"`
+	CategoryID  *string   `json:"category_id" validate:"omitempty,uuid4"`
+	BrandID     *string   `json:"brand_id"    validate:"omitempty,uuid4"`
+	Description *string   `json:"description" validate:"omitempty"`
+	BasePrice   *float64  `json:"base_price"  validate:"omitempty,gte=0"`
+	Currency    *string   `json:"currency"    validate:"omitempty,oneof=XAF XOF USD EUR GHS UGX NGN"`
+	Status      *string   `json:"status"      validate:"omitempty,oneof=draft active archived"`
+	Tags        *[]string `json:"tags"`
+}
+
+// Update godoc
+// @Summary      Update a product (admin)
+// @Tags         products
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Product UUID"
+// @Success      200  {object}  map[string]any
+// @Router       /admin/products/{id} [patch]
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	id := chi.URLParam(r, "id")
+
+	var req updateProductReq
+	if err := validator.Decode(r, &req); err != nil {
+		response.ValidationError(w, err, rid)
+		return
+	}
+
+	err := h.repo.Update(r.Context(), id, UpdateParams{
+		Name:        req.Name,
+		CategoryID:  req.CategoryID,
+		BrandID:     req.BrandID,
+		Description: req.Description,
+		BasePrice:   req.BasePrice,
+		Currency:    req.Currency,
+		Status:      req.Status,
+		Tags:        req.Tags,
+	})
+	if errors.Is(err, ErrNotFound) {
+		response.NotFound(w, "Product", rid)
+		return
+	}
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+
+	p, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+	response.Ok(w, fmtDetail(p))
+}
+
+type addImageReq struct {
+	// PublicID is what Cloudinary returns once the browser has uploaded. Every
+	// rendition URL is derived from it, so the client never picks URLs itself.
+	PublicID  string `json:"public_id"  validate:"required,max=255"`
+	Format    string `json:"format"     validate:"omitempty,oneof=jpg jpeg png webp avif"`
+	SizeBytes int    `json:"size_bytes" validate:"omitempty,gte=0"`
+	Width     int    `json:"width"      validate:"omitempty,gte=0"`
+	Height    int    `json:"height"     validate:"omitempty,gte=0"`
+	IsPrimary bool   `json:"is_primary"`
+	SortOrder int    `json:"sort_order" validate:"omitempty,gte=0"`
+}
+
+// AddImage godoc
+// @Summary      Attach an uploaded Cloudinary image to a product (admin)
+// @Tags         products
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Product UUID"
+// @Success      201  {object}  map[string]any
+// @Router       /admin/products/{id}/images [post]
+func (h *Handler) AddImage(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+
+	if h.cloudName == "" {
+		response.Err(w, http.StatusServiceUnavailable, "MEDIA_UNCONFIGURED",
+			"Image uploads are not configured", rid)
+		return
+	}
+
+	var req addImageReq
+	if err := validator.Decode(r, &req); err != nil {
+		response.ValidationError(w, err, rid)
+		return
+	}
+
+	productID := chi.URLParam(r, "id")
+	imageID, err := h.repo.AddImage(r.Context(), productID, h.cloudName, AddImageParams{
+		PublicID:  req.PublicID,
+		Format:    req.Format,
+		SizeBytes: req.SizeBytes,
+		Width:     req.Width,
+		Height:    req.Height,
+		IsPrimary: req.IsPrimary,
+		SortOrder: req.SortOrder,
+	})
+	if errors.Is(err, ErrNotFound) {
+		response.NotFound(w, "Product", rid)
+		return
+	}
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+
+	u := CloudinaryRenditions(h.cloudName, req.PublicID)
+	response.Created(w, map[string]any{
+		"id":            imageID,
+		"url_original":  u.Original,
+		"url_large":     u.Large,
+		"url_medium":    u.Medium,
+		"url_small":     u.Small,
+		"url_thumbnail": u.Thumbnail,
+		"is_primary":    req.IsPrimary,
+		"sort_order":    req.SortOrder,
+	})
+}
+
+// DeleteImage godoc
+// @Summary      Detach an image from a product (admin)
+// @Tags         products
+// @Security     BearerAuth
+// @Param        id       path  string  true  "Product UUID"
+// @Param        imageId  path  string  true  "Image UUID"
+// @Success      204
+// @Router       /admin/products/{id}/images/{imageId} [delete]
+func (h *Handler) DeleteImage(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	err := h.repo.DeleteImage(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "imageId"))
+	if errors.Is(err, ErrNotFound) {
+		response.NotFound(w, "Image", rid)
+		return
+	}
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+	response.NoContent(w)
 }

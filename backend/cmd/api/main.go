@@ -222,7 +222,7 @@ func main() {
 	// ── Handlers ──────────────────────────────────────────────────────────────
 	authH := auth.NewHandler(authSvc, googleVerifier)
 	userH := user.NewHandler(userRepo)
-	productH := product.NewHandler(productRepo)
+	productH := product.NewHandler(productRepo, cfg.Cloudinary.CloudName)
 	cartH := cart.NewHandler(cartRepo)
 	orderH := order.NewHandler(orderRepo, emailSvc)
 	paymentH := payment.NewHandler(paymentRepo, cfg)
@@ -405,6 +405,13 @@ func main() {
 			r.Post("/users/{userId}/suspend", adminH.SuspendUser)
 			r.Post("/vendors/{vendorId}/approve", adminH.ApproveVendor)
 			r.Get("/analytics/dashboard", adminH.GetDashboard)
+
+			// Catalogue management. Creation stays on POST /products (vendor
+			// scoped, it stamps vendor_id from the caller); everything that
+			// edits an existing product is admin-only.
+			r.Patch("/products/{id}", productH.Update)
+			r.Post("/products/{id}/images", productH.AddImage)
+			r.Delete("/products/{id}/images/{imageId}", productH.DeleteImage)
 		})
 	})
 

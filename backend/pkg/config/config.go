@@ -9,17 +9,18 @@ import (
 )
 
 type Config struct {
-	App     AppConfig
-	HTTP    HTTPConfig
-	DB      DBConfig
-	Redis   RedisConfig
-	JWT     JWTConfig
-	AWS     AWSConfig
-	Payment PaymentConfig
-	SMTP    SMTPConfig
-	Mail    MailConfig
-	Store   StoreConfig
-	OAuth   OAuthConfig
+	App        AppConfig
+	HTTP       HTTPConfig
+	DB         DBConfig
+	Redis      RedisConfig
+	JWT        JWTConfig
+	AWS        AWSConfig
+	Cloudinary CloudinaryConfig
+	Payment    PaymentConfig
+	SMTP       SMTPConfig
+	Mail       MailConfig
+	Store      StoreConfig
+	OAuth      OAuthConfig
 }
 
 // OAuthConfig holds third-party sign-in settings.
@@ -90,6 +91,21 @@ type AWSConfig struct {
 	S3Endpoint      string // for MinIO local dev
 	CloudFrontURL   string
 	PresignExpiry   time.Duration
+}
+
+// CloudinaryConfig drives signed, direct-from-browser image uploads. The API
+// secret only ever signs request parameters server-side — it is never sent to
+// the client. Leave CloudName blank and uploads report 503 rather than
+// pretending to work.
+type CloudinaryConfig struct {
+	CloudName string
+	APIKey    string
+	APISecret string
+	Folder    string
+}
+
+func (c CloudinaryConfig) Enabled() bool {
+	return c.CloudName != "" && c.APIKey != "" && c.APISecret != ""
 }
 
 type PaymentConfig struct {
@@ -203,6 +219,12 @@ func Load() (*Config, error) {
 			S3Endpoint:      getEnv("S3_ENDPOINT", "http://localhost:9000"),
 			CloudFrontURL:   getEnv("CLOUDFRONT_URL", "http://localhost:9000/happyfeet-media-dev"),
 			PresignExpiry:   getDur("S3_PRESIGN_EXPIRY", 15*time.Minute),
+		},
+		Cloudinary: CloudinaryConfig{
+			CloudName: getEnv("CLOUDINARY_CLOUD_NAME", ""),
+			APIKey:    getEnv("CLOUDINARY_API_KEY", ""),
+			APISecret: getEnv("CLOUDINARY_API_SECRET", ""),
+			Folder:    getEnv("CLOUDINARY_FOLDER", "happyfeet"),
 		},
 		Payment: PaymentConfig{
 			MTNBaseURL:          getEnv("MTN_BASE_URL", "https://sandbox.momodeveloper.mtn.com"),
