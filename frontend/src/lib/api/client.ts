@@ -10,17 +10,29 @@ export type ApiError = {
   requestId?: string;
 };
 
+// NEXT_PUBLIC_* values are inlined at build time. An unset CI variable inlines
+// as "" rather than undefined, which `??` does not catch — the empty string then
+// reaches `new URL()` and throws "Failed to construct 'URL': Invalid URL" on
+// every browser-side request. Treat blank as absent.
+function configured(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export function getApiBaseUrl(): string {
   if (typeof window !== "undefined") {
     return (
-      (window as unknown as { __HF_API__?: string }).__HF_API__ ??
-      process.env.NEXT_PUBLIC_API_URL ??
-      "http://localhost:8080/api/v1"
+      configured((window as unknown as { __HF_API__?: string }).__HF_API__) ??
+      configured(process.env.NEXT_PUBLIC_API_URL) ??
+      // Production serves the API through Caddy on the storefront's own origin,
+      // so same-origin is the right guess when nothing was configured. Local dev
+      // sets NEXT_PUBLIC_API_URL explicitly and never reaches this.
+      `${window.location.origin}/api/v1`
     );
   }
   return (
-    process.env.HAPPYFEET_API_URL ??
-    process.env.NEXT_PUBLIC_API_URL ??
+    configured(process.env.HAPPYFEET_API_URL) ??
+    configured(process.env.NEXT_PUBLIC_API_URL) ??
     "http://localhost:8080/api/v1"
   );
 }
