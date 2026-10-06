@@ -1,0 +1,65 @@
+{{define "body"}}
+{{$a := .Account}}
+
+{{if $a.Intro}}
+<tr>
+  <td class="hf-pad" style="padding:32px 40px 0;">
+    <p style="margin:0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.7;color:#4a4d58;">{{$a.Intro}}</p>
+  </td>
+</tr>
+{{end}}
+
+<!-- ── One-time code ─────────────────────────────────────────── -->
+{{if $a.Code}}
+<tr>
+  <td class="hf-pad" style="padding:26px 40px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fbf8f1;border:1px solid rgba(20,22,27,.08);border-radius:12px;">
+      <tr>
+        <td align="center" style="padding:26px 22px;">
+          <div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:#b08f45;font-weight:700;">{{$a.CodeLabel}}</div>
+          <div style="font-family:'SF Mono',Consolas,monospace;font-size:34px;color:#0e1b3a;padding-top:10px;letter-spacing:.3em;">{{$a.Code}}</div>
+          {{if $a.ExpiresIn}}
+          <div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:12px;color:#6e727f;padding-top:10px;">Expires in {{$a.ExpiresIn}}.</div>
+          {{end}}
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+{{end}}
+
+<!-- ── Primary action ────────────────────────────────────────── -->
+{{if $a.ActionURL}}
+<tr>
+  <td class="hf-pad" align="center" style="padding:26px 40px 0;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td align="center" style="background:#0e1b3a;border-radius:999px;">
+          <a href="{{$a.ActionURL}}" style="display:inline-block;padding:14px 34px;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;">{{$a.ActionLabel}}</a>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+{{end}}
+
+{{if $a.Outro}}
+<tr>
+  <td class="hf-pad" style="padding:26px 40px 0;">
+    <p style="margin:0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;line-height:1.7;color:#6e727f;">{{$a.Outro}}</p>
+  </td>
+</tr>
+{{end}}
+
+<!-- ── Help ──────────────────────────────────────────────────── -->
+{{if $a.WhatsAppLink}}
+<tr>
+  <td class="hf-pad" style="padding:26px 40px 0;">
+    <p style="margin:0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:13px;line-height:1.7;color:#6e727f;">
+      Need a hand? Message us on
+      <a href="{{$a.WhatsAppLink}}" style="color:#b08f45;text-decoration:none;font-weight:700;">WhatsApp</a>{{if $a.SupportEmail}} or write to <a href="mailto:{{$a.SupportEmail}}" style="color:#b08f45;text-decoration:none;font-weight:700;">{{$a.SupportEmail}}</a>{{end}}.
+    </p>
+  </td>
+</tr>
+{{end}}
+{{end}}

@@ -27,13 +27,13 @@ import (
 // ── errors ────────────────────────────────────────────────────────────────────
 
 var (
-	ErrNotFound      = errors.New("auth: not found")
-	ErrDuplicate     = errors.New("auth: duplicate")
-	ErrBadCreds      = errors.New("auth: bad credentials")
-	ErrLocked        = errors.New("auth: account locked")
-	ErrSuspended     = errors.New("auth: account suspended")
-	ErrInvalidOTP    = errors.New("auth: invalid OTP")
-	ErrOTPRateLimit  = errors.New("auth: OTP rate limit")
+	ErrNotFound     = errors.New("auth: not found")
+	ErrDuplicate    = errors.New("auth: duplicate")
+	ErrBadCreds     = errors.New("auth: bad credentials")
+	ErrLocked       = errors.New("auth: account locked")
+	ErrSuspended    = errors.New("auth: account suspended")
+	ErrInvalidOTP   = errors.New("auth: invalid OTP")
+	ErrOTPRateLimit = errors.New("auth: OTP rate limit")
 )
 
 const (
@@ -213,10 +213,10 @@ func (r *Repository) markOTPUsed(ctx context.Context, id string) error {
 // ── service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	repo   *Repository
-	cache  *cache.Client
-	maker  *token.Maker
-	cfg    *config.Config
+	repo  *Repository
+	cache *cache.Client
+	maker *token.Maker
+	cfg   *config.Config
 }
 
 func NewService(repo *Repository, c *cache.Client, m *token.Maker, cfg *config.Config) *Service {
@@ -353,6 +353,44 @@ func (s *Service) SendOTP(ctx context.Context, userID *string, identifier, purpo
 }
 
 // VerifyOTP checks the OTP and returns the otp row.
+// CreatePasswordReset issues a reset code for the account behind an email.
+//
+// The code is stored as its own OTP identifier, because ConfirmPasswordReset
+// receives nothing but the code — the user pastes it without re-entering which
+// address it was for.
+//
+// Returns a nil user when no account matches. That is not an error: the caller
+// answers identically either way so the endpoint cannot be used to discover
+// which addresses are registered.
+func (s *Service) CreatePasswordReset(ctx context.Context, email string) (*User, string, error) {
+	u, err := s.repo.byEmail(ctx, email)
+	if errors.Is(err, ErrNotFound) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Rate limit per address, mirroring SendOTP: 3 per 10 minutes.
+	rlKey := cache.Key(cache.KeyOTPRate, "password_reset", email)
+	n, _ := s.cache.Incr(ctx, rlKey)
+	if n == 1 {
+		_ = s.cache.Expire(ctx, rlKey, 10*time.Minute)
+	}
+	if n > 3 {
+		return nil, "", ErrOTPRateLimit
+	}
+
+	code, err := genOTP(6)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := s.repo.createOTP(ctx, &u.ID, code, hashStr(code), "password_reset", "email", time.Now().Add(otpExpiry)); err != nil {
+		return nil, "", err
+	}
+	return u, code, nil
+}
+
 func (s *Service) VerifyOTP(ctx context.Context, identifier, purpose, code string) (*OTP, error) {
 	otp, err := s.repo.findValidOTP(ctx, identifier, purpose)
 	if errors.Is(err, ErrNotFound) {
@@ -402,15 +440,26 @@ func (s *Service) SocialLogin(ctx context.Context, provider, uid, email, first, 
 
 // ── handler ───────────────────────────────────────────────────────────────────
 
+// Notifier is the slice of the notification service this package needs. It is
+// declared here rather than imported as a concrete type so auth can be tested
+// without a mail relay, and so a nil notifier is a valid no-op.
+type Notifier interface {
+	SendWelcome(to, firstName string)
+	SendPasswordResetCode(to, firstName, code, expiresIn string)
+	SendVerificationCode(to, firstName, code, expiresIn string)
+}
+
 type Handler struct {
 	svc *Service
 	// google is nil, or disabled, when GOOGLE_CLIENT_ID is unset — the endpoint
 	// then reports 503 rather than pretending to authenticate anyone.
 	google *oauth.GoogleVerifier
+	// notify is nil when email is unconfigured; every call site guards for it.
+	notify Notifier
 }
 
-func NewHandler(svc *Service, google *oauth.GoogleVerifier) *Handler {
-	return &Handler{svc: svc, google: google}
+func NewHandler(svc *Service, google *oauth.GoogleVerifier, notify Notifier) *Handler {
+	return &Handler{svc: svc, google: google, notify: notify}
 }
 
 // Register godoc
@@ -452,6 +501,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, rid)
 		return
 	}
+	// Fire-and-forget: a slow relay must not hold up the response, and a failed
+	// greeting must not fail a registration that already succeeded.
+	if h.notify != nil && req.Email != nil {
+		h.notify.SendWelcome(*req.Email, strings.TrimSpace(req.FirstName))
+	}
+
 	response.Created(w, map[string]any{"message": "Account created. Verify your contact to activate.", "user_id": id})
 }
 
@@ -571,8 +626,12 @@ func (h *Handler) SendOTP(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, rid)
 		return
 	}
-	// In production: dispatch via SMS/email. In dev, log code.
-	_ = code
+	// Email codes are delivered here. SMS has no gateway wired, so an SMS
+	// request still creates a code that reaches nobody — a known gap.
+	if req.Channel == "email" && h.notify != nil {
+		h.notify.SendVerificationCode(identifier, "", code, "5 minutes")
+	}
+
 	response.Ok(w, map[string]any{"message": "OTP sent to " + identifier, "expires_in": 300})
 }
 
@@ -628,8 +687,35 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  map[string]any
 // @Router       /auth/password/reset [post]
 func (h *Handler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
-	// Always 200 to prevent enumeration
-	response.Ok(w, map[string]string{"message": "If an account exists, you'll receive a reset code."})
+	rid := middleware.GetRequestID(r.Context())
+
+	var req struct {
+		Email string `json:"email" validate:"required,email"`
+	}
+	if err := validator.Decode(r, &req); err != nil {
+		response.ValidationError(w, err, rid)
+		return
+	}
+
+	// The same 200 is returned whether or not the address is registered, so the
+	// endpoint cannot be used to enumerate accounts. Only the email differs.
+	const sameAnswer = "If an account exists, you'll receive a reset code."
+
+	u, code, err := h.svc.CreatePasswordReset(r.Context(), req.Email)
+	if errors.Is(err, ErrOTPRateLimit) {
+		response.TooManyRequests(w, rid)
+		return
+	}
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+
+	if u != nil && h.notify != nil {
+		h.notify.SendPasswordResetCode(req.Email, u.FirstName, code, "5 minutes")
+	}
+
+	response.Ok(w, map[string]string{"message": sameAnswer})
 }
 
 // ConfirmPasswordReset godoc
@@ -720,9 +806,9 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, rid)
 	default:
 		body := map[string]any{
-			"tokens":  tokensJSON(toks),
-			"user":    userJSON(toks.User),
-			"is_new":  isNew,
+			"tokens":   tokensJSON(toks),
+			"user":     userJSON(toks.User),
+			"is_new":   isNew,
 			"provider": "google",
 		}
 		if isNew {

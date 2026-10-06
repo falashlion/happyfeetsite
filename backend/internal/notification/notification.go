@@ -128,13 +128,13 @@ func (h *Handler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
 	rid := middleware.GetRequestID(r.Context())
 	var req struct {
-		PushEnabled    *bool `json:"push_enabled"`
-		SMSEnabled     *bool `json:"sms_enabled"`
-		EmailEnabled   *bool `json:"email_enabled"`
-		OrderUpdates   *bool `json:"order_updates"`
-		Promotions     *bool `json:"promotions"`
-		RestockAlerts  *bool `json:"restock_alerts"`
-		PriceDrops     *bool `json:"price_drops"`
+		PushEnabled   *bool `json:"push_enabled"`
+		SMSEnabled    *bool `json:"sms_enabled"`
+		EmailEnabled  *bool `json:"email_enabled"`
+		OrderUpdates  *bool `json:"order_updates"`
+		Promotions    *bool `json:"promotions"`
+		RestockAlerts *bool `json:"restock_alerts"`
+		PriceDrops    *bool `json:"price_drops"`
 	}
 	if err := validator.Decode(r, &req); err != nil {
 		response.ValidationError(w, err, rid)

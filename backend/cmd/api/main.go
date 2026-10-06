@@ -220,7 +220,7 @@ func main() {
 	}
 
 	// ── Handlers ──────────────────────────────────────────────────────────────
-	authH := auth.NewHandler(authSvc, googleVerifier)
+	authH := auth.NewHandler(authSvc, googleVerifier, emailSvc)
 	userH := user.NewHandler(userRepo)
 	productH := product.NewHandler(productRepo, cfg.Cloudinary.CloudName)
 	cartH := cart.NewHandler(cartRepo)

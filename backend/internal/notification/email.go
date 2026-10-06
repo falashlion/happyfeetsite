@@ -28,6 +28,7 @@ type EmailService struct {
 
 	merchantOrder *template.Template
 	customerOrder *template.Template
+	accountTmpl   *template.Template
 }
 
 // templateData is the root passed to every template.
@@ -38,6 +39,7 @@ type templateData struct {
 	Headline  string
 	Subhead   string
 	Order     OrderEmail
+	Account   AccountEmail
 }
 
 func NewEmailService(m *mailer.Mailer, cfg *config.Config, log zerolog.Logger) (*EmailService, error) {
@@ -53,6 +55,9 @@ func NewEmailService(m *mailer.Mailer, cfg *config.Config, log zerolog.Logger) (
 		return nil, err
 	}
 	if s.customerOrder, err = parseWithLayout("templates/order_customer.html"); err != nil {
+		return nil, err
+	}
+	if s.accountTmpl, err = parseWithLayout("templates/account.html"); err != nil {
 		return nil, err
 	}
 	return s, nil

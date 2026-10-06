@@ -319,7 +319,7 @@ func newIntegrationHandler(t *testing.T) (*Handler, *database.DB) {
 	verifier.SetJWKSURLForTesting(jwksURL)
 
 	svc := NewService(NewRepository(db), rdb, token.NewMaker(&cfg.JWT), cfg)
-	return NewHandler(svc, verifier), db
+	return NewHandler(svc, verifier, nil), db
 }
 
 func envOr(key, fallback string) string {
