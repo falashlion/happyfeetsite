@@ -94,17 +94,34 @@ func ValidationError(w http.ResponseWriter, err error, rid string) {
 	}})
 }
 
+// snakeCase converts a Go field name to the snake_case the API uses elsewhere.
+//
+// Runs of capitals are kept together, so DeliveryAddressID becomes
+// delivery_address_id rather than delivery_address_i_d — a client cannot match
+// a validation error to its own field if the name is mangled.
 func snakeCase(s string) string {
-	out := make([]rune, 0, len(s)+4)
-	for i, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			if i > 0 {
+	r := []rune(s)
+	out := make([]rune, 0, len(r)+4)
+	lower := func(c rune) rune {
+		if c >= 'A' && c <= 'Z' {
+			return c + 32
+		}
+		return c
+	}
+	isUpper := func(c rune) bool { return c >= 'A' && c <= 'Z' }
+
+	for i, c := range r {
+		if isUpper(c) && i > 0 {
+			prevLower := !isUpper(r[i-1])
+			// The last capital of a run starts a new word only when a lowercase
+			// letter follows it: "IDToken" splits as id_token, "UserID" does not
+			// split before the D.
+			endOfRun := isUpper(r[i-1]) && i+1 < len(r) && !isUpper(r[i+1])
+			if prevLower || endOfRun {
 				out = append(out, '_')
 			}
-			out = append(out, r+32)
-		} else {
-			out = append(out, r)
 		}
+		out = append(out, lower(c))
 	}
 	return string(out)
 }

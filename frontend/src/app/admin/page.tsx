@@ -14,6 +14,7 @@ import {
   updateProduct, uploadProductImage, listPromotions, createPromotion,
   setPromotionActive, broadcastNotification,
   type AdminProduct, type Category, type Brand, type Promotion, type ProductPatch,
+  type ProductFilters,
 } from "@/lib/api/admin";
 
 type Tab = "catalogue" | "new" | "categories" | "discounts" | "announce";
@@ -144,11 +145,15 @@ function Catalogue() {
   const [selected, setSelected] = useState<AdminProduct | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<Msg>(null);
+  const [filters, setFilters] = useState<ProductFilters>({ status: "all", q: "" });
+  const [cats, setCats] = useState<Category[]>([]);
+
+  useEffect(() => { void listCategories().then(setCats).catch(() => {}); }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await listAdminProducts();
+      const list = await listAdminProducts(filters);
       setProducts(list);
       setSelected((cur) => (cur ? (list.find((p) => p.id === cur.id) ?? null) : null));
     } catch (e) {
@@ -156,15 +161,70 @@ function Catalogue() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filters]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  // Debounced so typing in the search box is not one request per keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => { void reload(); }, 250);
+    return () => clearTimeout(id);
+  }, [reload]);
 
-  if (loading) return <p className="text-sm text-neutral-500">Loading catalogue…</p>;
+  const filterBar = (
+    <div className="mb-5 flex flex-wrap items-end gap-3">
+      <label className="flex-1 min-w-[12rem]">
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Search
+        </span>
+        <input
+          value={filters.q ?? ""}
+          onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+          placeholder="Product name"
+          className={input}
+        />
+      </label>
+      <label>
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Status
+        </span>
+        <select
+          value={filters.status ?? "all"}
+          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+          className={input}
+        >
+          <option value="all">All</option>
+          <option value="draft">Draft</option>
+          <option value="active">Active</option>
+          <option value="archived">Archived</option>
+        </select>
+      </label>
+      <label>
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Category
+        </span>
+        <select
+          value={filters.category_id ?? ""}
+          onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value || undefined }))}
+          className={input}
+        >
+          <option value="">All</option>
+          {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+
+  if (loading && products.length === 0) {
+    return <div>{filterBar}<p className="text-sm text-neutral-500">Loading catalogue…</p></div>;
+  }
 
   if (products.length === 0) {
+    const filtered = Boolean(filters.q) || (filters.status && filters.status !== "all") || filters.category_id;
+    if (filtered) {
+      return <div>{filterBar}<p className="text-sm text-neutral-500">No products match those filters.</p></div>;
+    }
     return (
       <div>
+        {filterBar}
         <p className="text-sm">
           Your catalogue is empty. Anything you see on the storefront right now is demo content
           bundled with the site, not real products.
@@ -178,7 +238,9 @@ function Catalogue() {
   }
 
   return (
-    <div className="grid gap-8 md:grid-cols-[18rem_1fr]">
+    <div>
+      {filterBar}
+      <div className="grid gap-8 md:grid-cols-[18rem_1fr]">
       <nav aria-label="Products" className="md:border-r md:border-neutral-200 md:pr-6">
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
           Products ({products.length})
@@ -195,7 +257,10 @@ function Catalogue() {
                 }`}
               >
                 <span className="block truncate">{p.name}</span>
-                <span className="block truncate text-xs opacity-60">{p.brand}</span>
+                <span className="block truncate text-xs opacity-60">
+                  {p.brand}
+                  {p.status !== "active" && ` · ${p.status}`}
+                </span>
               </button>
             </li>
           ))}
@@ -207,6 +272,7 @@ function Catalogue() {
       ) : (
         <p className="text-sm text-neutral-500">Select a product to edit it.</p>
       )}
+      </div>
     </div>
   );
 }
@@ -326,10 +392,16 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [form, setForm] = useState({
     name: "", description: "", base_price: "", currency: "XAF",
-    category_id: "", brand_id: "",
+    category_id: "", brand_id: "", color: "", stock: "10",
+    sizes: "39,40,41,42,43,44", publish: true,
   });
+  // Photos are staged here and uploaded after the product exists — an image
+  // needs a product id to attach to, so it cannot go up with the form itself.
+  const [photos, setPhotos] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState("");
   const [msg, setMsg] = useState<Msg>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void (async () => {
@@ -351,21 +423,58 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
       setBusy(false);
       return;
     }
+    const sizes = form.sizes
+      .split(",")
+      .map((v) => Number(v.trim()))
+      .filter((v) => Number.isFinite(v) && v > 0);
+
     try {
-      await createProduct({
+      setStep("Creating product…");
+      const created = await createProduct({
         name: form.name.trim(),
         description: form.description.trim(),
         base_price: price,
         currency: form.currency,
         category_id: form.category_id,
         brand_id: form.brand_id,
+        sizes,
+        color: form.color.trim() || undefined,
+        stock: Number(form.stock) || 0,
+        status: form.publish ? "active" : "draft",
       });
-      setMsg({ kind: "ok", text: "Product created. Add an image from the Catalogue tab." });
+
+      // Upload sequentially: the first photo becomes the primary one, and
+      // ordering matters more here than shaving a second off.
+      let uploaded = 0;
+      for (const [i, file] of photos.entries()) {
+        setStep(`Uploading photo ${i + 1} of ${photos.length}…`);
+        try {
+          await uploadProductImage(created.id, file, { isPrimary: i === 0, sortOrder: i });
+          uploaded += 1;
+        } catch (e) {
+          // A failed photo must not discard a product that was created fine.
+          setMsg({
+            kind: "error",
+            text: `Product created, but photo ${i + 1} failed: ${errText(e)}`,
+          });
+        }
+      }
+
+      if (uploaded === photos.length) {
+        setMsg({
+          kind: "ok",
+          text: photos.length
+            ? `Product created with ${uploaded} photo${uploaded === 1 ? "" : "s"}.`
+            : "Product created.",
+        });
+      }
       setForm((f) => ({ ...f, name: "", description: "", base_price: "" }));
+      setPhotos([]);
+      if (photoInput.current) photoInput.current.value = "";
       onCreated();
     } catch (e) {
       setMsg({ kind: "error", text: errText(e, "Could not create the product.") });
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setStep(""); }
   }
 
   const ready = form.name.trim() && form.description.trim() && form.base_price &&
@@ -407,8 +516,71 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
         </Field>
       </div>
 
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Sizes (EU)">
+          <input value={form.sizes} onChange={(e) => setForm({ ...form, sizes: e.target.value })}
+            placeholder="39,40,41" className={input} />
+        </Field>
+        <Field label="Colour">
+          <input value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })}
+            placeholder="e.g. Black" className={input} />
+        </Field>
+        <Field label="Stock per size">
+          <input value={form.stock} inputMode="numeric"
+            onChange={(e) => setForm({ ...form, stock: e.target.value })} className={input} />
+        </Field>
+      </div>
+      <p className="-mt-2 text-xs text-neutral-500">
+        Each size becomes a buyable variant. A product with no sizes cannot be added to a basket.
+      </p>
+
+      <div>
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Photos
+        </span>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => photoInput.current?.click()}
+          className="rounded border-2 border-dashed border-neutral-400 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:border-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+        >
+          {photos.length === 0 ? "+ Add photos" : `+ Add more (${photos.length} selected)`}
+        </button>
+        <input
+          ref={photoInput}
+          type="file"
+          multiple
+          accept="image/jpeg,image/png,image/webp"
+          className="sr-only"
+          onChange={(e) => {
+            const picked = Array.from(e.target.files ?? []);
+            if (picked.length) setPhotos((cur) => [...cur, ...picked]);
+          }}
+        />
+        {photos.length > 0 && (
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {photos.map((f, i) => (
+              <li key={`${f.name}-${i}`}
+                className="flex items-center gap-2 rounded bg-neutral-100 px-2 py-1 text-xs">
+                <span className="max-w-[12rem] truncate">{f.name}</span>
+                {i === 0 && <span className="text-neutral-500">primary</span>}
+                <button type="button" aria-label={`Remove ${f.name}`}
+                  onClick={() => setPhotos((cur) => cur.filter((_, j) => j !== i))}
+                  className="text-neutral-500 hover:text-neutral-900">×</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={form.publish}
+          onChange={(e) => setForm({ ...form, publish: e.target.checked })} />
+        Publish immediately (otherwise saved as a draft, hidden from the storefront)
+      </label>
+
       <button type="button" onClick={submit} disabled={busy || !ready} className={primary}>
-        {busy ? "Creating…" : "Create product"}
+        {busy ? (step || "Creating…") : "Create product"}
       </button>
 
       <Note msg={msg} />

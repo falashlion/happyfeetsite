@@ -138,23 +138,35 @@ export type AdminProduct = {
   base_price: number;
   currency: string;
   in_stock: boolean;
+  status: "draft" | "active" | "archived";
   primary_image: { url_medium?: string; url_thumbnail?: string } | null;
 };
 
 type Envelope<T> = { data: T };
 
+export type ProductFilters = {
+  /** Name search. */
+  q?: string;
+  /** "draft" | "active" | "archived", or "all". */
+  status?: string;
+  category_id?: string;
+};
+
 /**
- * Lists products straight from the API.
+ * Lists products for the console.
  *
- * Deliberately NOT listProductsApi: that falls back to the bundled demo
- * catalogue when the API returns nothing, whose ids ("p007") are fixtures with
- * no database row. Editing one produced a 500 on every write. An empty
- * catalogue must look empty here.
+ * Uses /admin/products, not the public /products: the public list is
+ * active-only, and a product is created as a draft — it would be invisible the
+ * moment you made it. It is also not listProductsApi, which falls back to the
+ * bundled demo catalogue whose ids ("p007") have no database row.
  */
-export async function listAdminProducts(): Promise<AdminProduct[]> {
-  const res = await apiFetch<Envelope<AdminProduct[]>>("/products", {
-    query: { limit: 100 },
-    auth: false,
+export async function listAdminProducts(filters: ProductFilters = {}): Promise<AdminProduct[]> {
+  const res = await apiFetch<Envelope<AdminProduct[]>>("/admin/products", {
+    query: {
+      ...(filters.q ? { q: filters.q } : {}),
+      ...(filters.status && filters.status !== "all" ? { status: filters.status } : {}),
+      ...(filters.category_id ? { category_id: filters.category_id } : {}),
+    },
   });
   return res?.data ?? [];
 }
@@ -187,9 +199,15 @@ export type NewProduct = {
   base_price: number;
   currency: string;
   tags?: string[];
+  /** EU sizes to stock. Without a SKU the product cannot be added to a basket. */
+  sizes?: number[];
+  color?: string;
+  stock?: number;
+  /** Publish straight away; the column otherwise defaults to draft. */
+  status?: "draft" | "active";
 };
 
-export async function createProduct(input: NewProduct) {
+export async function createProduct(input: NewProduct): Promise<{ id: string }> {
   return apiFetch<{ id: string }>("/admin/products", { method: "POST", body: input });
 }
 

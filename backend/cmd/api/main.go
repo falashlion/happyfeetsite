@@ -413,6 +413,7 @@ func main() {
 			// Catalogue management. Creation stays on POST /products (vendor
 			// scoped, it stamps vendor_id from the caller); everything that
 			// edits an existing product is admin-only.
+			r.Get("/products", productH.AdminList)
 			r.Post("/products", productH.Create)
 			r.Patch("/products/{id}", productH.Update)
 			r.Post("/products/{id}/images", productH.AddImage)

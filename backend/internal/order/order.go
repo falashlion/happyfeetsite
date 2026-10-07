@@ -20,10 +20,11 @@ import (
 )
 
 var (
-	ErrNotFound      = errors.New("order: not found")
-	ErrCannotCancel  = errors.New("order: cannot cancel at this stage")
-	ErrEmptyCart     = errors.New("order: cart is empty")
-	ErrAddrNotFound  = errors.New("order: address not found")
+	ErrNotFound     = errors.New("order: not found")
+	ErrCannotCancel = errors.New("order: cannot cancel at this stage")
+	ErrEmptyCart    = errors.New("order: cart is empty")
+	ErrAddrNotFound = errors.New("order: address not found")
+	ErrOutOfStock   = errors.New("order: insufficient stock")
 )
 
 // ── models ────────────────────────────────────────────────────────────────────
@@ -42,24 +43,24 @@ type Item struct {
 }
 
 type Order struct {
-	ID                  string
-	OrderNumber         string
-	UserID              string
-	Status              string
-	Items               []Item
-	DeliveryAddress     json.RawMessage
-	DeliveryMethod      string
-	DeliveryFee         float64
-	EstimatedDelivery   *time.Time
-	TrackingNumber      *string
-	TrackingURL         *string
-	Subtotal            float64
-	DiscountAmount      float64
-	TotalAmount         float64
-	Currency            string
-	PaymentMethod       string
-	PlacedAt            time.Time
-	UpdatedAt           time.Time
+	ID                string
+	OrderNumber       string
+	UserID            string
+	Status            string
+	Items             []Item
+	DeliveryAddress   json.RawMessage
+	DeliveryMethod    string
+	DeliveryFee       float64
+	EstimatedDelivery *time.Time
+	TrackingNumber    *string
+	TrackingURL       *string
+	Subtotal          float64
+	DiscountAmount    float64
+	TotalAmount       float64
+	Currency          string
+	PaymentMethod     string
+	PlacedAt          time.Time
+	UpdatedAt         time.Time
 }
 
 // ── repository ────────────────────────────────────────────────────────────────
@@ -197,7 +198,11 @@ func (r *Repository) CreateFromCart(ctx context.Context, p CreateParams) (*Order
 	if err != nil {
 		return nil, err
 	}
-	type ci struct{ skuID, productID, name, color string; qty int; price, sizeEU float64 }
+	type ci struct {
+		skuID, productID, name, color string
+		qty                           int
+		price, sizeEU                 float64
+	}
 	var items []ci
 	var sub float64
 	for rows.Next() {
@@ -240,6 +245,26 @@ func (r *Repository) CreateFromCart(ctx context.Context, p CreateParams) (*Order
 		}
 	}
 
+	// Take the stock inside the same transaction that creates the order.
+	//
+	// Nothing decremented stock before this, so the shop would happily accept a
+	// hundred orders against five pairs and still report them in stock. The
+	// guard in the WHERE clause is what makes two simultaneous checkouts for the
+	// last pair safe: the second one matches no row and the whole order rolls
+	// back rather than overselling.
+	for _, it := range items {
+		tag, err := tx.Exec(ctx, `
+			UPDATE product_skus
+			SET stock_qty = stock_qty - $2, updated_at = NOW()
+			WHERE id = $1 AND stock_qty >= $2`, it.skuID, it.qty)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() == 0 {
+			return nil, ErrOutOfStock
+		}
+	}
+
 	_, _ = tx.Exec(ctx, `DELETE FROM cart_items WHERE cart_id=$1`, p.CartID)
 
 	if err := tx.Commit(ctx); err != nil {
@@ -249,9 +274,10 @@ func (r *Repository) CreateFromCart(ctx context.Context, p CreateParams) (*Order
 }
 
 // deliveryFeeFor mirrors the frontend's pricing table:
-//   STANDARD   2,000 (free over 50,000)
-//   EXPRESS    4,000
-//   SAME_DAY   8,000
+//
+//	STANDARD   2,000 (free over 50,000)
+//	EXPRESS    4,000
+//	SAME_DAY   8,000
 func deliveryFeeFor(method string, subtotal float64) float64 {
 	switch method {
 	case "EXPRESS":
@@ -429,6 +455,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, ErrAddrNotFound):
 		response.NotFound(w, "Address", rid)
+	case errors.Is(err, ErrOutOfStock):
+		response.Conflict(w, "One of the items just went out of stock", rid)
+		return
 	case errors.Is(err, ErrEmptyCart):
 		response.BadRequest(w, "Cart is empty", rid)
 	case err != nil:

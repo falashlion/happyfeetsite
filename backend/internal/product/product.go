@@ -114,6 +114,14 @@ type ListFilter struct {
 	SortBy       string
 	Cursor       *string
 	Limit        int
+
+	// Statuses restricts which product states are returned. Empty means the
+	// storefront default of active-only. The console passes every state: a
+	// product is created as 'draft', so without this it would vanish the
+	// instant it was made.
+	Statuses []string
+	// Search matches the product name, for the console's filter box.
+	Search *string
 }
 
 func (r *Repository) List(ctx context.Context, f ListFilter) ([]*Product, string, int64, error) {
@@ -124,7 +132,15 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]*Product, string
 	idx := 1
 	add := func(v any) int { args = append(args, v); i := idx; idx++; return i }
 
-	conds := []string{"p.status='active'", "p.deleted_at IS NULL"}
+	conds := []string{"p.deleted_at IS NULL"}
+	if len(f.Statuses) > 0 {
+		conds = append(conds, fmt.Sprintf("p.status = ANY($%d)", add(f.Statuses)))
+	} else {
+		conds = append(conds, "p.status='active'")
+	}
+	if f.Search != nil && *f.Search != "" {
+		conds = append(conds, fmt.Sprintf("p.name ILIKE $%d", add("%"+*f.Search+"%")))
+	}
 	if f.CategoryID != nil {
 		conds = append(conds, fmt.Sprintf("p.category_id=$%d", add(*f.CategoryID)))
 	}
@@ -450,6 +466,45 @@ func (r *Repository) CreateCategory(ctx context.Context, name string, parentID *
 		INSERT INTO categories(name,slug,parent_id)
 		VALUES($1,$2,$3) RETURNING id`, name, slugify(name), parentID).Scan(&id)
 	return id, err
+}
+
+// NewSKU is one buyable variant: a size in a colour, with stock.
+type NewSKU struct {
+	SizeEU   float64
+	Color    string
+	StockQty int
+}
+
+// AddSKUs creates the variants a product is actually sold as.
+//
+// This is not optional decoration: cart_items.sku_id is NOT NULL, so a product
+// with no SKUs cannot be added to a basket at all. A product created without
+// them looks finished in the catalogue and is quietly unbuyable.
+//
+// sku_code is UNIQUE across the whole table, so it is derived from the product
+// id as well as the variant.
+func (r *Repository) AddSKUs(ctx context.Context, productID string, skus []NewSKU) error {
+	if len(skus) == 0 {
+		return nil
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, s := range skus {
+		code := fmt.Sprintf("%s-%s-%g", strings.ToUpper(productID[:8]),
+			strings.ToUpper(slugify(s.Color)), s.SizeEU)
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO product_skus(product_id,sku_code,size_eu,color,stock_qty)
+			VALUES($1,$2,$3,$4,$5)
+			ON CONFLICT (sku_code) DO UPDATE SET stock_qty=EXCLUDED.stock_qty`,
+			productID, code, s.SizeEU, s.Color, s.StockQty); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // UpdateParams carries only the fields an edit may touch. Nil means "leave
@@ -852,6 +907,15 @@ type createProductReq struct {
 	BasePrice   float64  `json:"base_price"  validate:"required,gte=0"`
 	Currency    string   `json:"currency"    validate:"required,oneof=XAF XOF USD EUR GHS UGX NGN"`
 	Tags        []string `json:"tags"`
+
+	// Sizes are the EU sizes to stock. Without at least one the product has no
+	// SKU, and cart_items.sku_id is NOT NULL — it would be unbuyable.
+	Sizes []float64 `json:"sizes"      validate:"omitempty,dive,gt=0"`
+	Color string    `json:"color"      validate:"omitempty,max=50"`
+	Stock int       `json:"stock"      validate:"omitempty,gte=0"`
+	// Status lets the console publish immediately. The column defaults to
+	// 'draft', which is invisible on the storefront.
+	Status string `json:"status" validate:"omitempty,oneof=draft active"`
 }
 
 // CreateProduct godoc
@@ -901,8 +965,66 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, rid)
 		return
 	}
+	// Give the product something to be bought as. Default to a usual run of
+	// sizes rather than leaving it unbuyable when the caller sends none.
+	sizes := req.Sizes
+	if len(sizes) == 0 {
+		sizes = []float64{39, 40, 41, 42, 43, 44}
+	}
+	color := req.Color
+	if color == "" {
+		color = "Default"
+	}
+	skus := make([]NewSKU, 0, len(sizes))
+	for _, sz := range sizes {
+		skus = append(skus, NewSKU{SizeEU: sz, Color: color, StockQty: req.Stock})
+	}
+	if err := h.repo.AddSKUs(r.Context(), id, skus); err != nil {
+		log.Error().Err(err).Str("rid", rid).Str("product", id).Msg("add skus")
+	}
+
+	if req.Status != "" {
+		st := req.Status
+		if err := h.repo.Update(r.Context(), id, UpdateParams{Status: &st}); err != nil {
+			log.Error().Err(err).Str("rid", rid).Str("product", id).Msg("set status")
+		}
+	}
+
 	p, _ := h.repo.GetByID(r.Context(), id)
 	response.Created(w, fmtDetail(p))
+}
+
+// AdminList godoc
+// @Summary      List every product including drafts (admin)
+// @Tags         products
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]any
+// @Router       /admin/products [get]
+func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	q := r.URL.Query()
+
+	// The console must see drafts and archived products; the storefront list
+	// deliberately does not.
+	f := ListFilter{Limit: 100, Statuses: []string{"draft", "active", "archived"}}
+	if s := q.Get("status"); s != "" && s != "all" {
+		f.Statuses = []string{s}
+	}
+	if s := strings.TrimSpace(q.Get("q")); s != "" {
+		f.Search = &s
+	}
+	if s := q.Get("category_id"); s != "" && isUUID(s) {
+		f.CategoryID = &s
+	}
+
+	items, _, total, err := h.repo.List(r.Context(), f)
+	if err != nil {
+		log.Error().Err(err).Str("rid", rid).Msg("admin list products")
+		response.InternalError(w, rid)
+		return
+	}
+
+	response.Ok(w, map[string]any{"data": fmtList(items), "total": total})
 }
 
 // ArchiveProduct godoc
@@ -979,17 +1101,20 @@ func fmtList(products []*Product) []map[string]any {
 	out := make([]map[string]any, 0, len(products))
 	for _, p := range products {
 		out = append(out, map[string]any{
-			"id":            p.ID,
-			"name":          p.Name,
-			"slug":          p.Slug,
-			"brand":         p.BrandName,
-			"category":      p.CategoryName,
-			"base_price":    p.BasePrice,
-			"final_price":   p.FinalPrice,
-			"currency":      p.Currency,
-			"rating_avg":    p.RatingAvg,
-			"rating_count":  p.RatingCount,
-			"in_stock":      p.InStock,
+			"id":           p.ID,
+			"name":         p.Name,
+			"slug":         p.Slug,
+			"brand":        p.BrandName,
+			"category":     p.CategoryName,
+			"base_price":   p.BasePrice,
+			"final_price":  p.FinalPrice,
+			"currency":     p.Currency,
+			"rating_avg":   p.RatingAvg,
+			"rating_count": p.RatingCount,
+			"in_stock":     p.InStock,
+			// The console lists drafts and archived products and needs to say
+			// which is which; the storefront only ever sees active ones.
+			"status":        p.Status,
 			"primary_image": primaryImg(p.Images),
 		})
 	}
