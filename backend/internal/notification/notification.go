@@ -148,3 +148,78 @@ func (h *Handler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
 var _ = pgx.ErrNoRows
 var _ = errors.New
 var _ = context.Background
+
+// ── writing notifications ─────────────────────────────────────────────────────
+
+// NewNotification is one in-app message. Type is a stable machine-readable
+// label the client can branch on ("ORDER_PLACED", "PROMOTION"); Title and Body
+// are what a person reads.
+type NewNotification struct {
+	UserID    string
+	Type      string
+	Title     string
+	Body      string
+	ActionURL *string
+}
+
+// Create writes a single notification.
+//
+// notifications is RANGE-partitioned on created_at, so an insert outside every
+// defined partition fails outright. Callers treat a failure as non-fatal —
+// losing an in-app message must never fail the action that produced it.
+func (r *Repository) Create(ctx context.Context, n NewNotification) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO notifications(user_id,type,title,body,action_url)
+		VALUES($1,$2,$3,$4,$5)`, n.UserID, n.Type, n.Title, n.Body, n.ActionURL)
+	return err
+}
+
+// Broadcast sends the same message to every active customer. Written as one
+// INSERT ... SELECT so announcing a sale to a large list is a single statement
+// rather than a round trip per recipient.
+func (r *Repository) Broadcast(ctx context.Context, n NewNotification) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		INSERT INTO notifications(user_id,type,title,body,action_url)
+		SELECT id,$1,$2,$3,$4 FROM users WHERE status='active'`,
+		n.Type, n.Title, n.Body, n.ActionURL)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+type broadcastReq struct {
+	Type      string  `json:"type"       validate:"omitempty,max=60"`
+	Title     string  `json:"title"      validate:"required,max=200"`
+	Body      string  `json:"body"       validate:"required"`
+	ActionURL *string `json:"action_url" validate:"omitempty,url,max=500"`
+}
+
+// Broadcast godoc
+// @Summary      Send an in-app announcement to every active customer (admin)
+// @Tags         notifications
+// @Security     BearerAuth
+// @Success      201  {object}  map[string]any
+// @Router       /admin/notifications/broadcast [post]
+func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	var req broadcastReq
+	if err := validator.Decode(r, &req); err != nil {
+		response.ValidationError(w, err, rid)
+		return
+	}
+
+	kind := req.Type
+	if kind == "" {
+		kind = "ANNOUNCEMENT"
+	}
+
+	n, err := h.repo.Broadcast(r.Context(), NewNotification{
+		Type: kind, Title: req.Title, Body: req.Body, ActionURL: req.ActionURL,
+	})
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+	response.Created(w, map[string]any{"recipients": n})
+}

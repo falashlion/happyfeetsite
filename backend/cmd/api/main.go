@@ -38,6 +38,7 @@ import (
 	"github.com/happyfeet/api/internal/order"
 	"github.com/happyfeet/api/internal/payment"
 	"github.com/happyfeet/api/internal/product"
+	"github.com/happyfeet/api/internal/promotion"
 	"github.com/happyfeet/api/internal/review"
 	"github.com/happyfeet/api/internal/user"
 	"github.com/happyfeet/api/internal/vendor"
@@ -180,6 +181,7 @@ func main() {
 	notifRepo := notification.NewRepository(db)
 	vendorRepo := vendor.NewRepository(db)
 	adminRepo := admin.NewRepository(db)
+	promoRepo := promotion.NewRepository(db)
 
 	// ── Services ──────────────────────────────────────────────────────────────
 	authSvc := auth.NewService(authRepo, rdb, maker, cfg)
@@ -230,6 +232,7 @@ func main() {
 	wishlistH := wishlist.NewHandler(wishlistRepo)
 	mediaH := media.NewHandler(cfg, rdb)
 	notifH := notification.NewHandler(notifRepo)
+	promoH := promotion.NewHandler(promoRepo)
 	vendorH := vendor.NewHandler(vendorRepo)
 	adminH := admin.NewHandler(adminRepo)
 
@@ -317,6 +320,7 @@ func main() {
 
 		// ── Categories & Brands (public) ─────────────────────────────────────
 		r.Get("/categories", productH.ListCategories)
+		r.Get("/promotions/validate", promoH.Validate)
 		r.Get("/brands", productH.ListBrands)
 
 		// ── Cart (protected) ─────────────────────────────────────────────────
@@ -409,9 +413,17 @@ func main() {
 			// Catalogue management. Creation stays on POST /products (vendor
 			// scoped, it stamps vendor_id from the caller); everything that
 			// edits an existing product is admin-only.
+			r.Post("/products", productH.Create)
 			r.Patch("/products/{id}", productH.Update)
 			r.Post("/products/{id}/images", productH.AddImage)
 			r.Delete("/products/{id}/images/{imageId}", productH.DeleteImage)
+			r.Post("/categories", productH.CreateCategory)
+
+			// Discount events and in-app announcements.
+			r.Get("/promotions", promoH.List)
+			r.Post("/promotions", promoH.Create)
+			r.Patch("/promotions/{id}/active", promoH.SetActive)
+			r.Post("/notifications/broadcast", notifH.Broadcast)
 		})
 	})
 

@@ -1,12 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Truck, RotateCcw, Shield, Sparkles } from "lucide-react";
 import { login, register, me, logout, type AuthUser } from "@/lib/api/auth";
 import { GoogleSignIn } from "@/components/google-sign-in";
 import { useT } from "@/lib/i18n/context";
+
+// How long the signed-in confirmation stays on screen before the storefront.
+const REDIRECT_SECONDS = 3;
 
 type Mode = "login" | "register";
 type Channel = "email" | "phone";
@@ -37,6 +40,36 @@ export function AccountClient() {
   const [hydrated, setHydrated] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Seconds left before we send a freshly signed-in customer to the storefront.
+  // Null means no redirect pending.
+  const [redirectIn, setRedirectIn] = useState<number | null>(null);
+  const redirectTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Let the signed-in state land visibly before navigating away: going straight
+  // to the home page makes a successful sign-in look like nothing happened.
+  const goHomeShortly = useCallback(() => {
+    setRedirectIn(REDIRECT_SECONDS);
+    if (redirectTimer.current) clearInterval(redirectTimer.current);
+    redirectTimer.current = setInterval(() => {
+      setRedirectIn((n) => {
+        if (n === null) return null;
+        if (n <= 1) {
+          if (redirectTimer.current) clearInterval(redirectTimer.current);
+          router.push("/");
+          return 0;
+        }
+        return n - 1;
+      });
+    }, 1000);
+  }, [router]);
+
+  // An unmount mid-countdown must not leave a timer pushing a route later.
+  useEffect(
+    () => () => {
+      if (redirectTimer.current) clearInterval(redirectTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +102,7 @@ export function AccountClient() {
       const res = await login({ password, ...contact });
       setUser(res.user);
       router.refresh();
+      goHomeShortly();
     } catch (err) {
       setError(readErrorMessage(err, t("auth.error.generic")));
     } finally {
@@ -81,8 +115,9 @@ export function AccountClient() {
       setError(null);
       setUser(u);
       router.refresh();
+      goHomeShortly();
     },
-    [router],
+    [router, goHomeShortly],
   );
 
   const onGoogleError = useCallback(
@@ -101,7 +136,7 @@ export function AccountClient() {
   }
 
   if (hydrated && user) {
-    return <SignedIn t={t} user={user} onSignOut={onSignOut} busy={busy} />;
+    return <SignedIn t={t} user={user} onSignOut={onSignOut} busy={busy} redirectIn={redirectIn} />;
   }
 
   const isLogin = mode === "login";
@@ -350,11 +385,15 @@ function SignedIn({
   user,
   onSignOut,
   busy,
+  redirectIn,
 }: {
   t: T;
   user: AuthUser;
   onSignOut: () => void;
   busy: boolean;
+  // Seconds until the storefront, or null when the customer arrived here with
+  // an existing session and nothing is pending.
+  redirectIn: number | null;
 }) {
   return (
     <section className="container-hf" style={{ padding: "72px 0", maxWidth: 720 }}>
@@ -371,6 +410,26 @@ function SignedIn({
         {t("account.signedin.welcome_back", { name: user.first_name || "—" })}
       </h1>
       <div className="gold-rule" style={{ marginTop: 14 }} />
+
+      {redirectIn !== null && (
+        <p
+          role="status"
+          aria-live="polite"
+          style={{
+            marginTop: 18,
+            padding: "10px 14px",
+            borderRadius: 999,
+            display: "inline-block",
+            background: "rgba(176,143,69,.12)",
+            color: "var(--ink, #0e1b3a)",
+            fontSize: 13,
+          }}
+        >
+          {redirectIn > 0
+            ? `Taking you to the store in ${redirectIn}…`
+            : "Taking you to the store…"}
+        </p>
+      )}
       <p
         style={{
           fontFamily: "var(--font-serif)",

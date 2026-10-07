@@ -126,3 +126,127 @@ export async function uploadProductImage(
     sort_order: opts.sortOrder ?? 0,
   });
 }
+
+// ── catalogue reads for the console ───────────────────────────────────────────
+
+export type AdminProduct = {
+  id: string;
+  name: string;
+  slug: string;
+  brand: string;
+  category: string;
+  base_price: number;
+  currency: string;
+  in_stock: boolean;
+  primary_image: { url_medium?: string; url_thumbnail?: string } | null;
+};
+
+type Envelope<T> = { data: T };
+
+/**
+ * Lists products straight from the API.
+ *
+ * Deliberately NOT listProductsApi: that falls back to the bundled demo
+ * catalogue when the API returns nothing, whose ids ("p007") are fixtures with
+ * no database row. Editing one produced a 500 on every write. An empty
+ * catalogue must look empty here.
+ */
+export async function listAdminProducts(): Promise<AdminProduct[]> {
+  const res = await apiFetch<Envelope<AdminProduct[]>>("/products", {
+    query: { limit: 100 },
+    auth: false,
+  });
+  return res?.data ?? [];
+}
+
+export type Category = { id: string; name: string; slug: string };
+export type Brand = { id: string; name: string; slug: string };
+
+export async function listCategories(): Promise<Category[]> {
+  const res = await apiFetch<Envelope<Category[]>>("/categories", { auth: false });
+  return res?.data ?? [];
+}
+
+export async function listBrands(): Promise<Brand[]> {
+  const res = await apiFetch<Envelope<Brand[]>>("/brands", { auth: false });
+  return res?.data ?? [];
+}
+
+export async function createCategory(name: string, parentId?: string) {
+  return apiFetch<Category>("/admin/categories", {
+    method: "POST",
+    body: { name, ...(parentId ? { parent_id: parentId } : {}) },
+  });
+}
+
+export type NewProduct = {
+  name: string;
+  category_id: string;
+  brand_id: string;
+  description: string;
+  base_price: number;
+  currency: string;
+  tags?: string[];
+};
+
+export async function createProduct(input: NewProduct) {
+  return apiFetch<{ id: string }>("/admin/products", { method: "POST", body: input });
+}
+
+// ── discount events ───────────────────────────────────────────────────────────
+
+export type Promotion = {
+  id: string;
+  code: string | null;
+  name: string;
+  discount_type: "percentage" | "fixed_amount" | "free_shipping" | "buy_one_get_one";
+  discount_value: number;
+  min_order_amount: number | null;
+  max_uses: number | null;
+  uses_count: number;
+  applicable_to: string;
+  starts_at: string;
+  expires_at: string | null;
+  is_active: boolean;
+  /** Server-computed "would this apply right now" — is_active alone doesn't say. */
+  live: boolean;
+};
+
+export async function listPromotions(): Promise<Promotion[]> {
+  const res = await apiFetch<Envelope<Promotion[]>>("/admin/promotions");
+  return res?.data ?? [];
+}
+
+export async function createPromotion(input: {
+  name: string;
+  code?: string;
+  discount_type: Promotion["discount_type"];
+  discount_value: number;
+  min_order_amount?: number;
+  max_uses?: number;
+  starts_at?: string;
+  expires_at?: string;
+}) {
+  return apiFetch<Promotion>("/admin/promotions", { method: "POST", body: input });
+}
+
+export async function setPromotionActive(id: string, isActive: boolean) {
+  await apiFetch<void>(`/admin/promotions/${id}/active`, {
+    method: "PATCH",
+    body: { is_active: isActive },
+  });
+}
+
+// ── announcements ─────────────────────────────────────────────────────────────
+
+export async function broadcastNotification(input: {
+  title: string;
+  body: string;
+  action_url?: string;
+  type?: string;
+}) {
+  return apiFetch<{ recipients: number }>("/admin/notifications/broadcast", {
+    method: "POST",
+    body: input,
+  });
+}

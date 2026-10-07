@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/happyfeet/api/pkg/database"
 	"github.com/happyfeet/api/pkg/middleware"
 	"github.com/happyfeet/api/pkg/response"
 	"github.com/happyfeet/api/pkg/validator"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 var ErrNotFound = errors.New("product: not found")
@@ -71,22 +73,25 @@ type Product struct {
 	SKUs         []SKU
 }
 
+// JSON tags are load-bearing: without them Go serialises the field names
+// verbatim ("ID", "Slug"), which does not match the snake_case every other
+// endpoint returns. Clients reading c.slug got undefined.
 type Category struct {
-	ID            string
-	ParentID      *string
-	Name          string
-	Slug          string
-	IconURL       *string
-	ProductCount  int
-	Subcategories []*Category
+	ID            string      `json:"id"`
+	ParentID      *string     `json:"parent_id"`
+	Name          string      `json:"name"`
+	Slug          string      `json:"slug"`
+	IconURL       *string     `json:"icon_url"`
+	ProductCount  int         `json:"product_count"`
+	Subcategories []*Category `json:"subcategories,omitempty"`
 }
 
 type Brand struct {
-	ID           string
-	Name         string
-	Slug         string
-	LogoURL      *string
-	ProductCount int
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Slug         string  `json:"slug"`
+	LogoURL      *string `json:"logo_url"`
+	ProductCount int     `json:"product_count"`
 }
 
 // ── repository ────────────────────────────────────────────────────────────────
@@ -383,6 +388,11 @@ type CreateParams struct {
 func (r *Repository) Create(ctx context.Context, p CreateParams) (string, error) {
 	var id string
 	slug := slugify(p.Name)
+	// products.tags is TEXT[] NOT NULL DEFAULT '{}'. A nil slice marshals to
+	// NULL and violates the constraint, so normalise before the insert.
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO products(vendor_id,category_id,brand_id,name,slug,description,base_price,currency,tags)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
@@ -400,6 +410,46 @@ func (r *Repository) Archive(ctx context.Context, id, vendorID string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// EnsureVendor returns the vendor that owns this user's products, creating one
+// on first use.
+//
+// products.vendor_id is a foreign key to vendors.id, not to users.id — passing
+// a user ID straight through (as Create used to) violates the constraint on any
+// database where that UUID is not also a vendor. A single-merchant store still
+// needs its one vendor row to exist, and nothing in the deploy created it.
+func (r *Repository) EnsureVendor(ctx context.Context, ownerUserID, businessName string) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx,
+		`SELECT id FROM vendors WHERE owner_id=$1 ORDER BY created_at LIMIT 1`, ownerUserID,
+	).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+
+	if businessName == "" {
+		businessName = "Happy Feet"
+	}
+	err = r.db.QueryRow(ctx, `
+		INSERT INTO vendors(owner_id,business_name,business_type,status,approved_at)
+		VALUES($1,$2,'individual','active',NOW())
+		RETURNING id`, ownerUserID, businessName).Scan(&id)
+	return id, err
+}
+
+// CreateCategory adds a top-level or nested category. Slugs are derived from
+// the name and must be unique, so a repeat name is reported as a conflict
+// rather than silently creating a second category you cannot tell apart.
+func (r *Repository) CreateCategory(ctx context.Context, name string, parentID *string) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO categories(name,slug,parent_id)
+		VALUES($1,$2,$3) RETURNING id`, name, slugify(name), parentID).Scan(&id)
+	return id, err
 }
 
 // UpdateParams carries only the fields an edit may touch. Nil means "leave
@@ -820,8 +870,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		response.ValidationError(w, err, rid)
 		return
 	}
+	// vendor_id is a foreign key to vendors.id, not users.id. Resolve (or
+	// create) the caller's vendor rather than passing their user ID through.
+	vendorID, err := h.repo.EnsureVendor(r.Context(), middleware.GetUserID(r.Context()), "")
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+
 	id, err := h.repo.Create(r.Context(), CreateParams{
-		VendorID:    middleware.GetUserID(r.Context()),
+		VendorID:    vendorID,
 		CategoryID:  req.CategoryID,
 		BrandID:     req.BrandID,
 		Name:        req.Name,
@@ -831,6 +889,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Tags:        req.Tags,
 	})
 	if err != nil {
+		// The slug is derived from the name and is UNIQUE, so a repeat name is
+		// something the caller can fix, not a server fault.
+		if strings.Contains(err.Error(), "duplicate key") {
+			response.Conflict(w, "A product with this name already exists", rid)
+			return
+		}
+		// Without this the handler is a black box: every failure looks the same
+		// from outside and the cause never reaches the logs.
+		log.Error().Err(err).Str("rid", rid).Msg("create product")
 		response.InternalError(w, rid)
 		return
 	}
@@ -1002,6 +1069,15 @@ func qInt(s string, def int) int {
 
 // ── admin write handlers ──────────────────────────────────────────────────────
 
+// isUUID guards path parameters before they reach Postgres. A non-UUID id makes
+// the driver return a type error, which would surface as a 500 — "p007 is not a
+// product" is a 404, and saying so makes a client bug obvious instead of
+// looking like a server fault.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
 type updateProductReq struct {
 	Name        *string   `json:"name"        validate:"omitempty,max=255"`
 	CategoryID  *string   `json:"category_id" validate:"omitempty,uuid4"`
@@ -1023,6 +1099,10 @@ type updateProductReq struct {
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	rid := middleware.GetRequestID(r.Context())
 	id := chi.URLParam(r, "id")
+	if !isUUID(id) {
+		response.NotFound(w, "Product", rid)
+		return
+	}
 
 	var req updateProductReq
 	if err := validator.Decode(r, &req); err != nil {
@@ -1092,6 +1172,11 @@ func (h *Handler) AddImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	productID := chi.URLParam(r, "id")
+	if !isUUID(productID) {
+		response.NotFound(w, "Product", rid)
+		return
+	}
+
 	imageID, err := h.repo.AddImage(r.Context(), productID, h.cloudName, AddImageParams{
 		PublicID:  req.PublicID,
 		Format:    req.Format,
@@ -1133,6 +1218,10 @@ func (h *Handler) AddImage(w http.ResponseWriter, r *http.Request) {
 // @Router       /admin/products/{id}/images/{imageId} [delete]
 func (h *Handler) DeleteImage(w http.ResponseWriter, r *http.Request) {
 	rid := middleware.GetRequestID(r.Context())
+	if !isUUID(chi.URLParam(r, "id")) || !isUUID(chi.URLParam(r, "imageId")) {
+		response.NotFound(w, "Image", rid)
+		return
+	}
 	err := h.repo.DeleteImage(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "imageId"))
 	if errors.Is(err, ErrNotFound) {
 		response.NotFound(w, "Image", rid)
@@ -1143,4 +1232,37 @@ func (h *Handler) DeleteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.NoContent(w)
+}
+
+type createCategoryReq struct {
+	Name     string  `json:"name"      validate:"required,max=100"`
+	ParentID *string `json:"parent_id" validate:"omitempty,uuid4"`
+}
+
+// CreateCategory godoc
+// @Summary      Create a category (admin)
+// @Tags         categories
+// @Security     BearerAuth
+// @Success      201  {object}  map[string]any
+// @Router       /admin/categories [post]
+func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	var req createCategoryReq
+	if err := validator.Decode(r, &req); err != nil {
+		response.ValidationError(w, err, rid)
+		return
+	}
+
+	id, err := h.repo.CreateCategory(r.Context(), req.Name, req.ParentID)
+	if err != nil {
+		// The slug is derived from the name and is UNIQUE, so a duplicate name
+		// is a conflict the caller can act on, not a server fault.
+		if strings.Contains(err.Error(), "duplicate key") {
+			response.Conflict(w, "A category with this name already exists", rid)
+			return
+		}
+		response.InternalError(w, rid)
+		return
+	}
+	response.Created(w, map[string]any{"id": id, "name": req.Name, "slug": slugify(req.Name)})
 }
