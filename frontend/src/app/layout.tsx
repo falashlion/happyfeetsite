@@ -1,6 +1,7 @@
 import "@/styles/globals.css";
 import type { Metadata, Viewport } from "next";
-import { Header } from "@/components/header";
+import { Header, type NavLink } from "@/components/header";
+import { listCategoriesApi } from "@/lib/api/products";
 import { Footer } from "@/components/footer";
 import { WhatsAppFab } from "@/components/whatsapp-fab";
 import { Providers } from "@/components/providers";
@@ -41,11 +42,21 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const locale = await getLocale();
+
+  // Resolved here rather than in the header so the real categories are in the
+  // server-rendered HTML: fetching after hydration showed the fallback first,
+  // then swapped, and left crawlers with links to the demo categories.
+  // Categories with no products are skipped — a link to an empty one is a dead
+  // end for a shopper.
+  const navCategories: NavLink[] = (await listCategoriesApi())
+    .filter((c) => c.productCount > 0)
+    .map((c) => ({ slug: c.slug, label: c.name }));
+
   return (
     <html lang={locale}>
       <body>
         <Providers locale={locale}>
-          <Header />
+          <Header categories={navCategories} />
           <main style={{ flex: 1 }}>{children}</main>
           <Footer />
           <WhatsAppFab />

@@ -257,8 +257,10 @@ export async function getProductByIdApi(id: string): Promise<Product | null> {
   return localGetById(id) ?? null;
 }
 
-export async function listCategoriesApi(): Promise<{ slug: string; name: string }[]> {
-  type ApiCat = { id: string; slug: string; name: string };
+export async function listCategoriesApi(): Promise<
+  { slug: string; name: string; productCount: number }[]
+> {
+  type ApiCat = { id: string; slug: string; name: string; product_count?: number };
   const res = await apiFetch<Envelope<ApiCat[]>>("/categories", {
     auth: false,
     soft: true,
@@ -267,9 +269,17 @@ export async function listCategoriesApi(): Promise<{ slug: string; name: string 
   if (!res || !res.data) {
     // Fallback to static list
     const { HF_CATEGORIES } = await import("@/lib/catalog");
-    return HF_CATEGORIES.map((c) => ({ slug: c.slug as string, name: c.name }));
+    return HF_CATEGORIES.map((c) => ({
+      slug: c.slug as string,
+      name: c.name,
+      productCount: 0,
+    }));
   }
-  return res.data.map((c) => ({ slug: c.slug, name: c.name }));
+  return res.data.map((c) => ({
+    slug: c.slug,
+    name: c.name,
+    productCount: c.product_count ?? 0,
+  }));
 }
 
 export async function listBrandsApi(): Promise<string[]> {

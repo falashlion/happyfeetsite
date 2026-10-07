@@ -252,9 +252,9 @@ func Load() (*Config, error) {
 		Store: StoreConfig{
 			Name:            getEnv("STORE_NAME", "Happy Feet"),
 			OwnerEmail:      getEnv("STORE_OWNER_EMAIL", ""),
-			WhatsAppNumber:  normalizeWhatsApp(getEnv("STORE_WHATSAPP_NUMBER", "237612345678")),
-			WhatsAppDisplay: getEnv("STORE_WHATSAPP_DISPLAY", "+237 6 12 34 56 78"),
-			SupportEmail:    getEnv("STORE_SUPPORT_EMAIL", "care@happyfeet.com"),
+			WhatsAppNumber:  normalizeWhatsApp(getEnv("STORE_WHATSAPP_NUMBER", "237654904707")),
+			WhatsAppDisplay: getEnv("STORE_WHATSAPP_DISPLAY", "+237 6 54 90 47 07"),
+			SupportEmail:    getEnv("STORE_SUPPORT_EMAIL", "contact@happyfeetcm.com"),
 			Address:         getEnv("STORE_ADDRESS", "Bonapriso, Douala, Cameroon"),
 			Hours:           getEnv("STORE_HOURS", "Mon–Sat, 08:00–20:00 WAT"),
 		},

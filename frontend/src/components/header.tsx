@@ -3,13 +3,16 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, User, ShoppingBag, Menu, X } from "lucide-react";
 import { useCartCount, useCart } from "@/store/cart";
 import { useT } from "@/lib/i18n/context";
 import { LocaleToggle } from "@/components/locale-toggle";
 
-const LINKS: { slug: string; key: string }[] = [
+// Shown until the live categories arrive, and kept as the answer when the API
+// has nothing to offer — a shop with no catalogue yet still needs a navigation
+// bar rather than an empty strip.
+const FALLBACK_LINKS: { slug: string; key: string }[] = [
   { slug: "womens", key: "nav.women" },
   { slug: "mens", key: "nav.men" },
   { slug: "kids", key: "nav.kids" },
@@ -18,12 +21,29 @@ const LINKS: { slug: string; key: string }[] = [
   { slug: "sale", key: "nav.sale" },
 ];
 
-export function Header() {
+// The bar fits about six items before it wraps into the actions.
+const MAX_CATEGORY_LINKS = 5;
+
+export type NavLink = { slug: string; label: string };
+
+export function Header({ categories }: { categories?: NavLink[] }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const path = usePathname();
   const count = useCartCount();
+
+
   const hydrated = useCart((s) => s.hydrated);
   const { t } = useT();
+
+  const links: NavLink[] = useMemo(() => {
+    if (categories && categories.length > 0) {
+      return [
+        ...categories.slice(0, MAX_CATEGORY_LINKS),
+        { slug: "sale", label: t("nav.sale") },
+      ];
+    }
+    return FALLBACK_LINKS.map((l) => ({ slug: l.slug, label: t(l.key) }));
+  }, [categories, t]);
 
   useEffect(() => setMenuOpen(false), [path]);
   useEffect(() => {
@@ -72,12 +92,12 @@ export function Header() {
             fit from 1024px up; below that the drawer takes over. Keep these
             breakpoints in step with the nav rules in globals.css. */}
         <nav className="nav-links hidden lg:flex">
-          {LINKS.map((l) => {
+          {links.map((l) => {
             const href = l.slug === "sale" ? "/sale" : `/shop/${l.slug}`;
             const active = path === href;
             return (
               <Link key={l.slug} href={href} className={active ? "active" : ""}>
-                {t(l.key)}
+                {l.label}
               </Link>
             );
           })}
@@ -108,7 +128,7 @@ export function Header() {
       </header>
 
       {menuOpen && (
-        <MobileDrawer onClose={() => setMenuOpen(false)} count={count} />
+        <MobileDrawer onClose={() => setMenuOpen(false)} count={count} links={links} />
       )}
     </>
   );
@@ -117,9 +137,13 @@ export function Header() {
 function MobileDrawer({
   onClose,
   count,
+  links,
 }: {
   onClose: () => void;
   count: number;
+  // Resolved by Header so both navigations agree and the categories are
+  // fetched once.
+  links: NavLink[];
 }) {
   const { t } = useT();
   return (
@@ -148,13 +172,13 @@ function MobileDrawer({
         <div className="p-5 flex-1 overflow-y-auto">
           <div className="eyebrow eyebrow-muted mb-3">{t("nav.section_shop")}</div>
           <nav className="flex flex-col">
-            {LINKS.map((l) => (
+            {links.map((l) => (
               <Link
                 key={l.slug}
                 href={l.slug === "sale" ? "/sale" : `/shop/${l.slug}`}
                 className="py-3 border-b border-[var(--border-hair)] flex justify-between items-center text-[15px]"
               >
-                <span>{t(l.key)}</span>
+                <span>{l.label}</span>
               </Link>
             ))}
           </nav>

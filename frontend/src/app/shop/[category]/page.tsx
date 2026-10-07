@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { HF_CATEGORIES, HF_PRODUCTS } from "@/lib/catalog";
-import { listProductsApi } from "@/lib/api/products";
+import { listProductsApi, listCategoriesApi } from "@/lib/api/products";
 import { PlpClient } from "./plp-client";
 import { getBlurMap } from "@/lib/placeholder";
 import { tServer } from "@/lib/i18n/server";
@@ -59,9 +59,18 @@ export default async function CategoryPage({
 }) {
   const { category } = await params;
   const t = await tServer();
-  const cat = HF_CATEGORIES.find((c) => c.slug === category);
   const isSpecial = category === "sale" || category === "all";
-  if (!cat && !isSpecial) {
+  const staticCat = HF_CATEGORIES.find((c) => c.slug === category);
+
+  // Categories created in the console are not in the bundled demo list, and
+  // their slugs are their own ("loafers-test", not "loafers"). Validating only
+  // against the static list 404'd every real category, so a product could be
+  // created and then never found under it.
+  const apiCat = staticCat || isSpecial
+    ? undefined
+    : (await listCategoriesApi()).find((c) => c.slug === category);
+
+  if (!staticCat && !apiCat && !isSpecial) {
     notFound();
   }
 
@@ -70,7 +79,7 @@ export default async function CategoryPage({
   const allBrands = Array.from(new Set(HF_PRODUCTS.map((p) => p.brand))).sort();
   const blurs = await getBlurMap(initial.map((p) => p.image));
 
-  const name = nameFor(category, t);
+  const name = apiCat?.name ?? nameFor(category, t);
   const titleKey = TITLE_BY_CAT[category];
   const title = titleKey ? t(titleKey) : `${name}.`;
   const eyebrow = t("plp.eyebrow", { category: name });

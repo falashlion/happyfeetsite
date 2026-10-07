@@ -135,6 +135,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// The sizes and colours a shoe shop actually stocks. "Other" stays available
+// because no fixed list survives contact with a real catalogue.
+const EU_SIZES = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48];
+const COLORS = [
+  "Black", "White", "Brown", "Tan", "Navy", "Grey",
+  "Beige", "Red", "Green", "Blue", "Gold", "Silver",
+];
+
 const input = "w-full rounded border border-neutral-300 px-3 py-2 text-sm";
 const primary = "rounded bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-50";
 
@@ -392,9 +400,12 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [form, setForm] = useState({
     name: "", description: "", base_price: "", currency: "XAF",
-    category_id: "", brand_id: "", color: "", stock: "10",
-    sizes: "39,40,41,42,43,44", publish: true,
+    category_id: "", brand_id: "", stock: "10", publish: true,
   });
+  const [sizes, setSizes] = useState<number[]>([39, 40, 41, 42, 43, 44]);
+  const [otherSize, setOtherSize] = useState("");
+  const [color, setColor] = useState("Black");
+  const [otherColor, setOtherColor] = useState("");
   // Photos are staged here and uploaded after the product exists — an image
   // needs a product id to attach to, so it cannot go up with the form itself.
   const [photos, setPhotos] = useState<File[]>([]);
@@ -423,10 +434,12 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
       setBusy(false);
       return;
     }
-    const sizes = form.sizes
-      .split(",")
-      .map((v) => Number(v.trim()))
-      .filter((v) => Number.isFinite(v) && v > 0);
+    const chosenColor = (color === "__other" ? otherColor : color).trim();
+    if (sizes.length === 0) {
+      setMsg({ kind: "error", text: "Pick at least one size — a product with none cannot be bought." });
+      setBusy(false);
+      return;
+    }
 
     try {
       setStep("Creating product…");
@@ -437,8 +450,8 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
         currency: form.currency,
         category_id: form.category_id,
         brand_id: form.brand_id,
-        sizes,
-        color: form.color.trim() || undefined,
+        sizes: [...sizes].sort((a, b) => a - b),
+        color: chosenColor || undefined,
         stock: Number(form.stock) || 0,
         status: form.publish ? "active" : "draft",
       });
@@ -516,23 +529,77 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
         </Field>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Sizes (EU)">
-          <input value={form.sizes} onChange={(e) => setForm({ ...form, sizes: e.target.value })}
-            placeholder="39,40,41" className={input} />
-        </Field>
+      <div>
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Sizes (EU)
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          {Array.from(new Set([...EU_SIZES, ...sizes])).sort((a, b) => a - b).map((sz) => {
+            const on = sizes.includes(sz);
+            return (
+              <button
+                key={sz}
+                type="button"
+                aria-pressed={on}
+                onClick={() =>
+                  setSizes((cur) => (on ? cur.filter((v) => v !== sz) : [...cur, sz]))
+                }
+                className={`min-w-[3rem] rounded border px-2.5 py-1.5 text-sm transition ${
+                  on
+                    ? "border-neutral-900 bg-neutral-900 text-white"
+                    : "border-neutral-300 hover:border-neutral-500"
+                }`}
+              >
+                {sz}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            value={otherSize}
+            onChange={(e) => setOtherSize(e.target.value)}
+            inputMode="decimal"
+            placeholder="Other size"
+            className="w-32 rounded border border-neutral-300 px-2 py-1 text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const v = Number(otherSize.trim());
+              if (Number.isFinite(v) && v > 0 && !sizes.includes(v)) setSizes((c) => [...c, v]);
+              setOtherSize("");
+            }}
+            className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50"
+          >
+            Add
+          </button>
+          <span className="text-xs text-neutral-500">
+            {sizes.length} selected — each becomes a buyable variant
+          </span>
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Colour">
-          <input value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })}
-            placeholder="e.g. Black" className={input} />
+          <select value={color} onChange={(e) => setColor(e.target.value)} className={input}>
+            {COLORS.map((c) => <option key={c} value={c}>{c}</option>)}
+            <option value="__other">Other…</option>
+          </select>
+          {color === "__other" && (
+            <input
+              value={otherColor}
+              onChange={(e) => setOtherColor(e.target.value)}
+              placeholder="Colour name"
+              className={`${input} mt-2`}
+            />
+          )}
         </Field>
         <Field label="Stock per size">
           <input value={form.stock} inputMode="numeric"
             onChange={(e) => setForm({ ...form, stock: e.target.value })} className={input} />
         </Field>
       </div>
-      <p className="-mt-2 text-xs text-neutral-500">
-        Each size becomes a buyable variant. A product with no sizes cannot be added to a basket.
-      </p>
 
       <div>
         <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">

@@ -17,10 +17,10 @@ function waDigits(raw: string): string {
 export const STORE = {
   name: process.env.NEXT_PUBLIC_STORE_NAME ?? "Happy Feet",
   whatsappNumber: waDigits(
-    process.env.NEXT_PUBLIC_STORE_WHATSAPP_NUMBER ?? "237612345678",
+    process.env.NEXT_PUBLIC_STORE_WHATSAPP_NUMBER ?? "237654904707",
   ),
   whatsappDisplay:
-    process.env.NEXT_PUBLIC_STORE_WHATSAPP_DISPLAY ?? "+237 6 12 34 56 78",
-  supportEmail: process.env.NEXT_PUBLIC_STORE_SUPPORT_EMAIL ?? "care@happyfeet.cm",
+    process.env.NEXT_PUBLIC_STORE_WHATSAPP_DISPLAY ?? "+237 6 54 90 47 07",
+  supportEmail: process.env.NEXT_PUBLIC_STORE_SUPPORT_EMAIL ?? "contact@happyfeetcm.com",
   address: process.env.NEXT_PUBLIC_STORE_ADDRESS ?? "Bonapriso, Douala, Cameroon",
 } as const;
