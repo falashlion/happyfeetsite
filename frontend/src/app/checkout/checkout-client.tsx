@@ -766,7 +766,9 @@ function SignInWall({ t }: { t: T }) {
         {t("checkout.signin_lede")}
       </p>
       <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 28 }}>
-        <Link href="/account" className="btn btn-primary">
+        {/* Carry the destination so signing in resumes checkout rather than
+            dropping the shopper on the home page with a full bag. */}
+        <Link href="/account?next=/checkout" className="btn btn-primary">
           {t("auth.tab.signin")}
         </Link>
         <Link href="/bag" className="btn btn-secondary">

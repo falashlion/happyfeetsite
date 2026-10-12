@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Truck, RotateCcw, Shield, Sparkles } from "lucide-react";
 import { login, register, me, logout, type AuthUser } from "@/lib/api/auth";
 import { GoogleSignIn } from "@/components/google-sign-in";
@@ -34,6 +34,7 @@ function readErrorMessage(err: unknown, fallback: string): string {
 export function AccountClient() {
   const { t } = useT();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("login");
   const [channel, setChannel] = useState<Channel>("email");
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -47,6 +48,22 @@ export function AccountClient() {
 
   // Let the signed-in state land visibly before navigating away: going straight
   // to the home page makes a successful sign-in look like nothing happened.
+  // Where to send them once signed in. Only same-origin paths are accepted —
+  // a ?next= pointing anywhere else would make this an open redirect.
+  const destination = (() => {
+    const next = searchParams.get("next");
+    if (next && next.startsWith("/") && !next.startsWith("//")) return next;
+    return "/";
+  })();
+
+  const resumeLabel = useCallback(
+    (seconds: number) => {
+      const where = destination === "/checkout" ? "checkout" : "the store";
+      return seconds > 0 ? `Taking you to ${where} in ${seconds}…` : `Taking you to ${where}…`;
+    },
+    [destination],
+  );
+
   const goHomeShortly = useCallback(() => {
     setRedirectIn(REDIRECT_SECONDS);
     if (redirectTimer.current) clearInterval(redirectTimer.current);
@@ -55,13 +72,13 @@ export function AccountClient() {
         if (n === null) return null;
         if (n <= 1) {
           if (redirectTimer.current) clearInterval(redirectTimer.current);
-          router.push("/");
+          router.push(destination);
           return 0;
         }
         return n - 1;
       });
     }, 1000);
-  }, [router]);
+  }, [router, destination]);
 
   // An unmount mid-countdown must not leave a timer pushing a route later.
   useEffect(
@@ -136,7 +153,7 @@ export function AccountClient() {
   }
 
   if (hydrated && user) {
-    return <SignedIn t={t} user={user} onSignOut={onSignOut} busy={busy} redirectIn={redirectIn} />;
+    return <SignedIn t={t} user={user} onSignOut={onSignOut} busy={busy} redirectIn={redirectIn} resumeLabel={resumeLabel} />;
   }
 
   const isLogin = mode === "login";
@@ -386,14 +403,18 @@ function SignedIn({
   onSignOut,
   busy,
   redirectIn,
+  resumeLabel,
 }: {
   t: T;
   user: AuthUser;
   onSignOut: () => void;
   busy: boolean;
-  // Seconds until the storefront, or null when the customer arrived here with
-  // an existing session and nothing is pending.
+  // Seconds until we move on, or null when the customer arrived here with an
+  // existing session and nothing is pending.
   redirectIn: number | null;
+  // Says where they are being taken, so "back to checkout" does not read as
+  // "back to the store".
+  resumeLabel: (seconds: number) => string;
 }) {
   return (
     <section className="container-hf" style={{ padding: "72px 0", maxWidth: 720 }}>
@@ -425,9 +446,7 @@ function SignedIn({
             fontSize: 13,
           }}
         >
-          {redirectIn > 0
-            ? `Taking you to the store in ${redirectIn}…`
-            : "Taking you to the store…"}
+          {resumeLabel(redirectIn)}
         </p>
       )}
       <p
