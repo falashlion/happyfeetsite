@@ -82,6 +82,37 @@ func (o OrderEmail) MerchantWhatsAppLink() string {
 	return "https://wa.me/" + digits + "?text=" + url.QueryEscape(msg)
 }
 
+// CustomerDeliveredWhatsAppLink is the link the *customer* taps after delivery.
+// It is a separate message from CustomerWhatsAppLink because by this point the
+// order has arrived — offering to "confirm my delivery" would read as though
+// nothing had happened.
+func (o OrderEmail) CustomerDeliveredWhatsAppLink() string {
+	return o.WhatsAppLink(fmt.Sprintf(
+		"Hello %s 👋\n\nI have received order %s.\nI'd like to ask about it.\n\nThank you!",
+		o.StoreName, o.OrderNumber))
+}
+
+// DeliveredMessage is the thank-you sent once a parcel is in the customer's
+// hands. One function so the email, its text alternative and the WhatsApp
+// forward all carry exactly the same words.
+func (o OrderEmail) DeliveredMessage() string {
+	return fmt.Sprintf(
+		"Hello %s 👋\n\nYour order %s has been delivered — thank you for shopping with %s.\n\nIf anything is not right, reply here within 14 days and we will collect it.\n\nWe would love to see them on you.",
+		firstName(o.CustomerName), o.OrderNumber, o.StoreName)
+}
+
+// DeliveredWhatsAppLink is the link staff tap to forward the thank-you to the
+// customer by hand. Many customers here have a phone and no email, so this is
+// the fallback that actually reaches them; without a number there is nobody to
+// open a chat with and the caller omits the button.
+func (o OrderEmail) DeliveredWhatsAppLink() string {
+	digits := digitsOnly(o.CustomerPhone)
+	if digits == "" {
+		return ""
+	}
+	return "https://wa.me/" + digits + "?text=" + url.QueryEscape(o.DeliveredMessage())
+}
+
 // OrderURL points the merchant at the order in the storefront account area.
 func (o OrderEmail) OrderURL() string {
 	if o.SiteURL == "" {

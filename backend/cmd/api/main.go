@@ -420,6 +420,12 @@ func main() {
 			r.Delete("/products/{id}/images/{imageId}", productH.DeleteImage)
 			r.Post("/categories", productH.CreateCategory)
 
+			// Fulfilment queue. Reads are unrestricted across customers and
+			// writes are confined to the transition map in internal/order.
+			r.Get("/orders", orderH.AdminList)
+			r.Get("/orders/{id}", orderH.AdminGet)
+			r.Patch("/orders/{id}/status", orderH.AdminUpdateStatus)
+
 			// Discount events and in-app announcements.
 			r.Get("/promotions", promoH.List)
 			r.Post("/promotions", promoH.Create)

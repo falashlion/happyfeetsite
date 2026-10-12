@@ -26,9 +26,10 @@ type EmailService struct {
 	site  string
 	log   zerolog.Logger
 
-	merchantOrder *template.Template
-	customerOrder *template.Template
-	accountTmpl   *template.Template
+	merchantOrder  *template.Template
+	customerOrder  *template.Template
+	deliveredOrder *template.Template
+	accountTmpl    *template.Template
 }
 
 // templateData is the root passed to every template.
@@ -55,6 +56,9 @@ func NewEmailService(m *mailer.Mailer, cfg *config.Config, log zerolog.Logger) (
 		return nil, err
 	}
 	if s.customerOrder, err = parseWithLayout("templates/order_customer.html"); err != nil {
+		return nil, err
+	}
+	if s.deliveredOrder, err = parseWithLayout("templates/order_delivered.html"); err != nil {
 		return nil, err
 	}
 	if s.accountTmpl, err = parseWithLayout("templates/account.html"); err != nil {
@@ -116,6 +120,53 @@ func (s *EmailService) SendOrderPlaced(o OrderEmail) {
 			s.mail.SendAsync(msg)
 		}
 	}
+}
+
+// SendOrderDelivered thanks the customer once a parcel has been handed over.
+// Only the customer is written to — the merchant pressed the button and does
+// not need telling. Delivery is asynchronous, so a slow relay never holds up
+// the console.
+func (s *EmailService) SendOrderDelivered(o OrderEmail) {
+	if !s.Enabled() {
+		s.log.Debug().Str("order", o.OrderNumber).Msg("email disabled; skipping delivery thank-you")
+		return
+	}
+	s.applyStore(&o)
+	if o.CustomerEmail == "" {
+		// Common here: plenty of customers order with a phone and no address.
+		// The console still offers the WhatsApp forward, so this is routine.
+		s.log.Debug().Str("order", o.OrderNumber).Msg("no customer email; delivery thank-you not sent")
+		return
+	}
+
+	data := templateData{
+		Subject:   fmt.Sprintf("%s — order %s delivered", s.storeName(), o.OrderNumber),
+		Preheader: "Thank you. Fourteen days to change your mind.",
+		Eyebrow:   "Order delivered",
+		Headline:  "Thank you, " + firstName(o.CustomerName) + ".",
+		Subhead:   "Your pairs have arrived.",
+		Order:     o,
+	}
+	html, err := s.render(s.deliveredOrder, data)
+	if err != nil {
+		s.log.Error().Err(err).Str("order", o.OrderNumber).Msg("render delivery email")
+		return
+	}
+	s.mail.SendAsync(mailer.Message{
+		To:      []string{o.CustomerEmail},
+		ReplyTo: s.store.SupportEmail,
+		Subject: data.Subject,
+		HTML:    html,
+		Text:    deliveredPlainText(o),
+	})
+}
+
+// ForwardLink is the wa.me deep link carrying the delivery thank-you, for staff
+// to forward by hand. Store identity lives on the service, so applying it here
+// keeps config out of the order package.
+func (s *EmailService) ForwardLink(o OrderEmail) string {
+	s.applyStore(&o)
+	return o.DeliveredWhatsAppLink()
 }
 
 func (s *EmailService) renderMerchant(o OrderEmail) (mailer.Message, error) {
@@ -208,6 +259,18 @@ func customerPlainText(o OrderEmail) string {
 	fmt.Fprintf(&b, "\n%s\n", o.DeliveryLabel)
 	if link := o.CustomerWhatsAppLink(); link != "" {
 		fmt.Fprintf(&b, "\nChat with us on WhatsApp (%s):\n%s\n", o.WhatsAppDisplay, link)
+	}
+	fmt.Fprintf(&b, "\n%s · %s · %s\n", o.StoreName, o.StoreAddress, o.SupportEmail)
+	return b.String()
+}
+
+func deliveredPlainText(o OrderEmail) string {
+	var b strings.Builder
+	b.WriteString(o.DeliveredMessage())
+	b.WriteString("\n\n")
+	writeLines(&b, o)
+	if link := o.CustomerDeliveredWhatsAppLink(); link != "" {
+		fmt.Fprintf(&b, "\nMessage us on WhatsApp (%s):\n%s\n", o.WhatsAppDisplay, link)
 	}
 	fmt.Fprintf(&b, "\n%s · %s · %s\n", o.StoreName, o.StoreAddress, o.SupportEmail)
 	return b.String()

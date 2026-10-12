@@ -1,0 +1,77 @@
+{{define "body"}}
+{{$o := .Order}}
+
+<!-- ── Delivered confirmation ────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:32px 40px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fbf8f1;border:1px solid rgba(20,22,27,.08);border-radius:12px;">
+      <tr>
+        <td align="center" style="padding:24px 22px;">
+          <div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:#b08f45;font-weight:700;">Delivered</div>
+          <div style="font-family:'SF Mono',Consolas,monospace;font-size:19px;color:#0e1b3a;padding-top:8px;letter-spacing:.06em;">{{$o.OrderNumber}}</div>
+          <div style="height:1px;background:rgba(20,22,27,.08);margin:16px 0;font-size:0;line-height:0;">&nbsp;</div>
+          <div style="font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:12px;color:#4a4d58;line-height:1.7;">
+            Your parcel has been handed over and your account is settled in full.<br>
+            Nothing further is owed.
+          </div>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+
+<!-- ── Thank you ─────────────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:28px 40px 0;">
+    <p style="margin:0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.85;color:#4a4d58;">
+      Thank you for choosing {{$o.StoreName}}. Every pair we send out is checked by hand before it
+      leaves the atelier, and we hope yours lives up to it.
+    </p>
+  </td>
+</tr>
+
+<!-- ── WhatsApp CTA ──────────────────────────────────────────── -->
+{{if $o.CustomerDeliveredWhatsAppLink}}
+<tr>
+  <td class="hf-pad" style="padding:26px 40px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="hf-btn">
+      <tr>
+        <td align="center" bgcolor="#25D366" style="border-radius:8px;">
+          <a href="{{$o.CustomerDeliveredWhatsAppLink}}"
+             style="display:inline-block;padding:16px 30px;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:.02em;color:#0a1330;text-decoration:none;border-radius:8px;">
+            Message us on WhatsApp
+          </a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:12px 0 0;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:12px;color:#6e727f;text-align:center;line-height:1.7;">
+      Wrong size or not quite right? Tell us within 14 days and we collect it &mdash;<br>
+      <span style="color:#15161b;font-weight:600;">{{$o.WhatsAppDisplay}}</span>, {{$o.StoreHours}}.
+    </p>
+  </td>
+</tr>
+{{end}}
+
+<!-- ── What was delivered ────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:32px 40px 0;">
+    {{template "sectionLabel" "What was delivered"}}
+    {{template "itemsTable" $o}}
+  </td>
+</tr>
+
+<!-- ── Returns and care ──────────────────────────────────────── -->
+<tr>
+  <td class="hf-pad" style="padding:30px 40px 38px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f7fb;border-radius:12px;">
+      <tr>
+        <td style="padding:20px 22px;font-family:'Manrope',Helvetica,Arial,sans-serif;font-size:12px;line-height:1.9;color:#4a4d58;">
+          <strong style="color:#0e1b3a;letter-spacing:.02em;">Fourteen days to change your mind</strong><br>
+          Keep the box. If the fit is not right, message us and we arrange collection at no cost to you.
+          {{if $o.SiteURL}}<br><span style="color:#6e727f;">Your order history lives at <a href="{{$o.OrderURL}}" style="color:#8c7034;">your account</a>.</span>{{end}}
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+{{end}}

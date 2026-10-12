@@ -339,6 +339,11 @@ func (r *Repository) Customer(ctx context.Context, userID string) (Customer, err
 // tested without a mail relay, and so a nil notifier is a valid no-op.
 type Notifier interface {
 	SendOrderPlaced(notification.OrderEmail)
+	SendOrderDelivered(notification.OrderEmail)
+	// ForwardLink is the wa.me deep link carrying the same message the email
+	// sends, for staff to forward by hand. It needs store identity, which only
+	// the notifier holds, so it lives here rather than on the view model.
+	ForwardLink(notification.OrderEmail) string
 }
 
 type Handler struct {
@@ -476,6 +481,13 @@ func (h *Handler) notifyOrderPlaced(ctx context.Context, o *Order, userID string
 		return
 	}
 	customer, _ := h.repo.Customer(ctx, userID)
+	h.notify.SendOrderPlaced(h.orderEmail(o, customer))
+}
+
+// orderEmail renders an order into the flat view model the templates take.
+// Shared by every order message, so the receipt and the delivery thank-you can
+// never disagree about a total or an address.
+func (h *Handler) orderEmail(o *Order, customer Customer) notification.OrderEmail {
 	addr := parseAddress(o.DeliveryAddress)
 
 	// The address snapshot is the authority on who receives the parcel; the
@@ -511,7 +523,7 @@ func (h *Handler) notifyOrderPlaced(ctx context.Context, o *Order, userID string
 		deliveryFee = notification.FormatMoney(o.DeliveryFee, o.Currency)
 	}
 
-	h.notify.SendOrderPlaced(notification.OrderEmail{
+	return notification.OrderEmail{
 		OrderNumber:   o.OrderNumber,
 		PlacedAt:      notification.FormatDate(o.PlacedAt),
 		Status:        o.Status,
@@ -530,7 +542,7 @@ func (h *Handler) notifyOrderPlaced(ctx context.Context, o *Order, userID string
 		Discount:    discount,
 		DeliveryFee: deliveryFee,
 		Total:       notification.FormatMoney(o.TotalAmount, o.Currency),
-	})
+	}
 }
 
 // address mirrors the JSONB snapshot stored on the order.

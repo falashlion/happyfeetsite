@@ -1,6 +1,6 @@
 "use client";
 
-// Staff console: catalogue, categories, discount events, announcements.
+// Staff console: orders, catalogue, categories, discount events, announcements.
 // Deliberately plain — this is an internal tool, not storefront surface.
 //
 // The role check is ergonomics only. Every endpoint it calls is admin-scoped
@@ -13,14 +13,17 @@ import {
   listAdminProducts, listCategories, listBrands, createCategory, createProduct,
   updateProduct, uploadProductImage, listPromotions, createPromotion,
   setPromotionActive, broadcastNotification,
+  listAdminOrders, getAdminOrder, updateOrderStatus,
   type AdminProduct, type Category, type Brand, type Promotion, type ProductPatch,
-  type ProductFilters,
+  type ProductFilters, type AdminOrder, type OrderStatus, type OrderFilters,
 } from "@/lib/api/admin";
+import { formatPrice } from "@/lib/format";
 
-type Tab = "catalogue" | "new" | "categories" | "discounts" | "announce";
+type Tab = "orders" | "catalogue" | "new" | "categories" | "discounts" | "announce";
 type Msg = { kind: "ok" | "error"; text: string } | null;
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "orders", label: "Orders" },
   { id: "catalogue", label: "Catalogue" },
   { id: "new", label: "New product" },
   { id: "categories", label: "Categories" },
@@ -35,7 +38,7 @@ function errText(e: unknown, fallback = "Something went wrong.") {
 export default function AdminPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [checking, setChecking] = useState(true);
-  const [tab, setTab] = useState<Tab>("catalogue");
+  const [tab, setTab] = useState<Tab>("orders");
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +95,7 @@ export default function AdminPage() {
         ))}
       </nav>
 
+      {tab === "orders" && <Orders />}
       {tab === "catalogue" && <Catalogue />}
       {tab === "new" && <NewProductForm onCreated={() => setTab("catalogue")} />}
       {tab === "categories" && <Categories />}
@@ -104,7 +108,7 @@ export default function AdminPage() {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="mx-auto max-w-5xl px-4 py-10">
-      <h1 className="mb-6 text-2xl font-semibold">Catalogue console</h1>
+      <h1 className="mb-6 text-2xl font-semibold">Staff console</h1>
       {children}
     </main>
   );
@@ -145,6 +149,438 @@ const COLORS = [
 
 const input = "w-full rounded border border-neutral-300 px-3 py-2 text-sm";
 const primary = "rounded bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-50";
+
+// ── Orders ────────────────────────────────────────────────────────────────────
+
+const STATUS_FILTERS: { value: string; label: string }[] = [
+  { value: "PLACED,PAID,PROCESSING,SHIPPED", label: "Open" },
+  { value: "all", label: "All" },
+  { value: "PLACED", label: "Placed" },
+  { value: "PROCESSING", label: "Processing" },
+  { value: "SHIPPED", label: "Shipped" },
+  { value: "DELIVERED", label: "Delivered" },
+  { value: "CANCELLED", label: "Cancelled" },
+];
+
+const STATUS_TONE: Record<string, string> = {
+  PLACED: "bg-amber-100 text-amber-900",
+  PAID: "bg-amber-100 text-amber-900",
+  PROCESSING: "bg-blue-100 text-blue-900",
+  SHIPPED: "bg-indigo-100 text-indigo-900",
+  DELIVERED: "bg-green-100 text-green-800",
+  CANCELLED: "bg-neutral-200 text-neutral-700",
+};
+
+const STATUS_VERB: Record<string, string> = {
+  PROCESSING: "Mark as processing",
+  SHIPPED: "Mark as shipped",
+  DELIVERED: "Mark as delivered",
+  CANCELLED: "Cancel order",
+};
+
+function StatusPill({ status }: { status: string }) {
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_TONE[status] ?? "bg-neutral-100 text-neutral-700"}`}>
+      {status.toLowerCase().replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function when(iso: string | null | undefined) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function Orders() {
+  const [orders, setOrders] = useState<AdminOrder[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState<Msg>(null);
+  const [filters, setFilters] = useState<OrderFilters>({ status: STATUS_FILTERS[0].value, q: "" });
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const page = await listAdminOrders(filters);
+      setOrders(page.orders);
+      setCursor(page.cursor);
+      // Keep the open order selected across a refresh, but drop it if the new
+      // filter no longer contains it.
+      setSelectedId((cur) => (cur && page.orders.some((o) => o.id === cur) ? cur : null));
+      setMsg(null);
+    } catch (e) {
+      setMsg({ kind: "error", text: errText(e, "Could not load orders.") });
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
+  // Debounced so typing in the search box is not one request per keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => { void reload(); }, 250);
+    return () => clearTimeout(id);
+  }, [reload]);
+
+  async function loadMore() {
+    if (!cursor) return;
+    try {
+      const page = await listAdminOrders({ ...filters, cursor });
+      setOrders((cur) => [...cur, ...page.orders]);
+      setCursor(page.cursor);
+    } catch (e) {
+      setMsg({ kind: "error", text: errText(e, "Could not load more orders.") });
+    }
+  }
+
+  // Replaces one row in place after a status change, so the queue updates
+  // without refetching the whole page and losing the operator's scroll.
+  const patchRow = useCallback((updated: AdminOrder) => {
+    setOrders((cur) => cur.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
+  }, []);
+
+  const filterBar = (
+    <div className="mb-5 flex flex-wrap items-end gap-3">
+      <label className="flex-1 min-w-[12rem]">
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Search
+        </span>
+        <input
+          value={filters.q ?? ""}
+          onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+          placeholder="Order number, name, email or phone"
+          className={input}
+        />
+      </label>
+      <label>
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Status
+        </span>
+        <select
+          value={filters.status ?? "all"}
+          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+          className={input}
+        >
+          {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+
+  if (loading && orders.length === 0) {
+    return <div>{filterBar}<p className="text-sm text-neutral-500">Loading orders…</p></div>;
+  }
+
+  if (orders.length === 0) {
+    return (
+      <div>
+        {filterBar}
+        <p className="text-sm text-neutral-500">
+          {filters.q || filters.status !== "all"
+            ? "No orders match those filters."
+            : "No orders yet."}
+        </p>
+        <Note msg={msg} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {filterBar}
+      <div className="grid gap-8 md:grid-cols-[20rem_1fr]">
+        <nav aria-label="Orders" className="md:border-r md:border-neutral-200 md:pr-6">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Orders ({orders.length})
+          </h2>
+          <ul className="max-h-[70vh] space-y-1 overflow-y-auto">
+            {orders.map((o) => (
+              <li key={o.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(o.id)}
+                  aria-current={selectedId === o.id}
+                  className={`w-full rounded px-3 py-2 text-left text-sm transition ${
+                    selectedId === o.id ? "bg-neutral-900 text-white" : "hover:bg-neutral-100"
+                  }`}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">{o.customer.name || "—"}</span>
+                    <span className="shrink-0 text-xs opacity-70">
+                      {formatPrice(o.total_amount, o.currency)}
+                    </span>
+                  </span>
+                  <span className="mt-0.5 flex items-center gap-2 text-xs opacity-60">
+                    <span className="truncate">{o.order_number}</span>
+                    <span className="ml-auto shrink-0">{when(o.placed_at)}</span>
+                  </span>
+                  <span className="mt-1 block">
+                    {selectedId === o.id
+                      ? <span className="text-xs opacity-70">{o.status.toLowerCase().replace(/_/g, " ")}</span>
+                      : <StatusPill status={o.status} />}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {cursor && (
+            <button
+              type="button"
+              onClick={loadMore}
+              className="mt-3 w-full rounded border border-neutral-300 px-3 py-2 text-xs hover:bg-neutral-50"
+            >
+              Load older orders
+            </button>
+          )}
+          <Note msg={msg} />
+        </nav>
+
+        {selectedId ? (
+          <OrderDetail key={selectedId} orderId={selectedId} onChanged={patchRow} />
+        ) : (
+          <p className="text-sm text-neutral-500">Select an order to see it.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OrderDetail({
+  orderId,
+  onChanged,
+}: {
+  orderId: string;
+  onChanged: (o: AdminOrder) => void;
+}) {
+  const [order, setOrder] = useState<AdminOrder | null>(null);
+  const [target, setTarget] = useState<OrderStatus | "">("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<Msg>(null);
+  // Held separately from `msg` so the forward link survives the next action's
+  // message and stays tappable while staff switch to WhatsApp and back.
+  const [forwardUrl, setForwardUrl] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setOrder(null);
+    setForwardUrl("");
+    getAdminOrder(orderId)
+      .then((o) => { if (!cancelled) { setOrder(o); setTarget(""); } })
+      .catch((e) => { if (!cancelled) setMsg({ kind: "error", text: errText(e, "Could not load the order.") }); });
+    return () => { cancelled = true; };
+  }, [orderId]);
+
+  if (!order) {
+    return <section><p className="text-sm text-neutral-500">Loading order…</p><Note msg={msg} /></section>;
+  }
+
+  const addr = order.delivery_address ?? {};
+  const addressLines = [
+    addr.street,
+    [addr.city, addr.state, addr.postal_code].filter(Boolean).join(", "),
+    addr.country,
+  ].filter((l): l is string => Boolean(l && l.trim()));
+
+  async function apply() {
+    if (!order || !target) return;
+    setBusy(true); setMsg(null); setForwardUrl("");
+    try {
+      const res = await updateOrderStatus(order.id, target, reason.trim() || undefined);
+      setOrder(res);
+      onChanged(res);
+      setTarget("");
+      setReason("");
+      if (res.whatsapp_forward_url) setForwardUrl(res.whatsapp_forward_url);
+
+      if (!res.changed) {
+        setMsg({ kind: "ok", text: "Already in that status — nothing changed." });
+      } else if (res.status === "DELIVERED") {
+        setMsg({
+          kind: "ok",
+          text: order.customer.email
+            ? `Marked delivered. A thank-you is on its way to ${order.customer.email}.`
+            : "Marked delivered. No email on file — forward the thank-you on WhatsApp below.",
+        });
+      } else {
+        setMsg({ kind: "ok", text: `Moved to ${res.status.toLowerCase()}.` });
+      }
+    } catch (e) {
+      setMsg({ kind: "error", text: errText(e, "Could not update the order.") });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <section className="space-y-6">
+      <header className="flex flex-wrap items-center gap-3">
+        <h2 className="text-lg font-semibold">{order.order_number}</h2>
+        <StatusPill status={order.status} />
+        <span className="ml-auto text-sm text-neutral-500">{when(order.placed_at)}</span>
+      </header>
+
+      {/* ── Who and where ── */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="rounded border border-neutral-200 p-3 text-sm">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Customer</h3>
+          <p className="font-medium">{order.customer.name || "—"}</p>
+          {order.customer.email && (
+            <p><a href={`mailto:${order.customer.email}`} className="underline">{order.customer.email}</a></p>
+          )}
+          {order.customer.phone && (
+            <p><a href={`tel:${order.customer.phone}`} className="underline">{order.customer.phone}</a></p>
+          )}
+          {!order.customer.email && (
+            <p className="mt-1 text-xs text-amber-800">No email on file — use WhatsApp to reach them.</p>
+          )}
+        </div>
+        <div className="rounded border border-neutral-200 p-3 text-sm">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Deliver to</h3>
+          {addr.recipient_name && <p className="font-medium">{addr.recipient_name}</p>}
+          {addressLines.map((l) => <p key={l}>{l}</p>)}
+          {addr.recipient_phone && <p className="text-neutral-600">{addr.recipient_phone}</p>}
+          <p className="mt-2 text-xs text-neutral-500">
+            {order.delivery_method.toLowerCase().replace(/_/g, " ")} ·{" "}
+            {order.payment_method.replace(/_/g, " ")}
+          </p>
+        </div>
+      </div>
+
+      {/* ── Lines ── */}
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Items</h3>
+        <ul className="divide-y divide-neutral-200 border-y border-neutral-200">
+          {order.items.map((it) => (
+            <li key={it.id} className="flex items-center gap-3 py-2 text-sm">
+              {it.primary_image_url && (
+                <Image
+                  src={it.primary_image_url}
+                  alt=""
+                  width={40}
+                  height={40}
+                  className="h-10 w-10 rounded object-cover"
+                  unoptimized
+                />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{it.product_name}</span>
+                <span className="block text-xs text-neutral-500">
+                  EU {it.size_eu} · {it.color} · ×{it.quantity}
+                </span>
+              </span>
+              <span className="shrink-0">{formatPrice(it.subtotal, order.currency)}</span>
+            </li>
+          ))}
+        </ul>
+        <dl className="mt-2 space-y-1 text-sm">
+          <div className="flex justify-between text-neutral-600">
+            <dt>Subtotal</dt><dd>{formatPrice(order.subtotal, order.currency)}</dd>
+          </div>
+          {order.discount_amount > 0 && (
+            <div className="flex justify-between text-neutral-600">
+              <dt>Discount</dt><dd>− {formatPrice(order.discount_amount, order.currency)}</dd>
+            </div>
+          )}
+          <div className="flex justify-between text-neutral-600">
+            <dt>Delivery</dt>
+            <dd>{order.delivery_fee > 0 ? formatPrice(order.delivery_fee, order.currency) : "Complimentary"}</dd>
+          </div>
+          <div className="flex justify-between font-medium">
+            <dt>Total</dt><dd>{formatPrice(order.total_amount, order.currency)}</dd>
+          </div>
+        </dl>
+      </div>
+
+      {/* ── Move it along ── */}
+      <div className="rounded border border-neutral-200 p-3">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Update status
+        </h3>
+        {order.next_statuses.length === 0 ? (
+          <p className="text-sm text-neutral-500">
+            {order.status === "DELIVERED"
+              ? `Delivered${order.delivered_at ? ` on ${when(order.delivered_at)}` : ""}. Nothing further to do.`
+              : "This order has reached a final state."}
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-end gap-3">
+            {/* Only the moves the server will accept — the same map gates both ends. */}
+            <label className="min-w-[12rem]">
+              <span className="sr-only">New status</span>
+              <select
+                value={target}
+                onChange={(e) => setTarget(e.target.value as OrderStatus | "")}
+                className={input}
+              >
+                <option value="">Choose…</option>
+                {order.next_statuses.map((s) => (
+                  <option key={s} value={s}>{STATUS_VERB[s] ?? s}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex-1 min-w-[12rem]">
+              <span className="sr-only">Note</span>
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Note for the record (optional)"
+                className={input}
+              />
+            </label>
+            <button type="button" onClick={apply} disabled={busy || !target} className={primary}>
+              {busy ? "Saving…" : "Apply"}
+            </button>
+          </div>
+        )}
+
+        {target === "CANCELLED" && (
+          <p className="mt-2 text-xs text-amber-800">
+            Cancelling returns these pairs to stock.
+          </p>
+        )}
+        {target === "DELIVERED" && (
+          <p className="mt-2 text-xs text-neutral-500">
+            Sends the customer a branded thank-you, and offers it for forwarding on WhatsApp.
+          </p>
+        )}
+
+        <Note msg={msg} />
+
+        {forwardUrl && (
+          <a
+            href={forwardUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-block rounded bg-[#25D366] px-4 py-2 text-sm font-medium text-neutral-900"
+          >
+            Forward the thank-you on WhatsApp →
+          </a>
+        )}
+      </div>
+
+      {/* ── Audit trail ── */}
+      {order.history && order.history.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">History</h3>
+          <ul className="space-y-1 text-sm">
+            {order.history.map((h, i) => (
+              <li key={`${h.created_at}-${i}`} className="flex flex-wrap items-baseline gap-2 text-neutral-600">
+                <span className="text-neutral-900">
+                  {h.from_status ? `${h.from_status.toLowerCase()} → ` : ""}{h.to_status.toLowerCase()}
+                </span>
+                <span className="text-xs">{when(h.created_at)}</span>
+                {h.actor_name && <span className="text-xs">by {h.actor_name}</span>}
+                {h.reason && <span className="text-xs italic">“{h.reason}”</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
 
 // ── Catalogue ─────────────────────────────────────────────────────────────────
 

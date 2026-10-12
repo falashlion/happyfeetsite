@@ -268,3 +268,116 @@ export async function broadcastNotification(input: {
     body: input,
   });
 }
+
+// ── fulfilment queue ──────────────────────────────────────────────────────────
+
+/** Every status the order table can hold. */
+export type OrderStatus =
+  | "PLACED" | "PAID" | "PROCESSING" | "SHIPPED" | "DELIVERED"
+  | "CANCELLED" | "RETURN_REQUESTED" | "RETURNED" | "REFUNDED";
+
+export type AdminOrderItem = {
+  id: string;
+  product_name: string;
+  primary_image_url: string;
+  size_eu: number;
+  color: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+};
+
+/** The JSONB address snapshot taken when the order was placed. */
+export type OrderAddress = {
+  recipient_name?: string;
+  recipient_phone?: string;
+  street?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+};
+
+export type OrderStatusEvent = {
+  from_status: string | null;
+  to_status: string;
+  actor_name: string;
+  reason: string | null;
+  created_at: string;
+};
+
+export type AdminOrder = {
+  id: string;
+  order_number: string;
+  status: OrderStatus;
+  items: AdminOrderItem[];
+  customer: { name: string; email: string; phone: string };
+  delivery_address: OrderAddress;
+  delivery_method: string;
+  delivery_fee: number;
+  subtotal: number;
+  discount_amount: number;
+  total_amount: number;
+  currency: string;
+  payment_method: string;
+  placed_at: string;
+  shipped_at: string | null;
+  delivered_at: string | null;
+  /**
+   * The moves the server will accept from here. Rendering anything else would
+   * be offering a button guaranteed to 409 — the same map enforces both ends.
+   */
+  next_statuses: OrderStatus[];
+  /** Present on the detail endpoint only. */
+  history?: OrderStatusEvent[];
+};
+
+export type OrderFilters = {
+  /** A single status, or "all". */
+  status?: string;
+  /** Order number, customer name, email or phone. */
+  q?: string;
+  cursor?: string;
+};
+
+export type OrderPage = { orders: AdminOrder[]; cursor: string | null };
+
+export async function listAdminOrders(filters: OrderFilters = {}): Promise<OrderPage> {
+  const res = await apiFetch<{ data: AdminOrder[]; meta?: { cursor: string | null } }>(
+    "/admin/orders",
+    {
+      query: {
+        ...(filters.status && filters.status !== "all" ? { status: filters.status } : {}),
+        ...(filters.q ? { q: filters.q } : {}),
+        ...(filters.cursor ? { cursor: filters.cursor } : {}),
+      },
+    },
+  );
+  return { orders: res?.data ?? [], cursor: res?.meta?.cursor ?? null };
+}
+
+export async function getAdminOrder(id: string): Promise<AdminOrder> {
+  return apiFetch<AdminOrder>(`/admin/orders/${id}`);
+}
+
+export type StatusUpdate = AdminOrder & {
+  /** False when the order was already in that status — nothing was written. */
+  changed: boolean;
+  /**
+   * A wa.me link carrying the same thank-you the delivery email sends, so it
+   * can be forwarded by hand. Empty when we hold no phone number, or when the
+   * change was not a delivery.
+   */
+  whatsapp_forward_url: string;
+};
+
+export async function updateOrderStatus(
+  id: string,
+  status: OrderStatus,
+  reason?: string,
+): Promise<StatusUpdate> {
+  return apiFetch<StatusUpdate>(`/admin/orders/${id}/status`, {
+    method: "PATCH",
+    body: { status, ...(reason ? { reason } : {}) },
+  });
+}
