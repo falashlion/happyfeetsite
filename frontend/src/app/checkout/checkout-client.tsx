@@ -247,7 +247,7 @@ export function CheckoutClient() {
 
   return (
     <main>
-      <section className="container-hf" style={{ padding: "40px 0 0" }}>
+      <section className="container-hf" style={{ paddingBlock: "40px 0" }}>
         <Link
           href="/bag"
           style={{
@@ -704,7 +704,7 @@ function EmptyBag({ t }: { t: T }) {
   return (
     <section
       className="container-hf"
-      style={{ padding: "80px 0", textAlign: "center", maxWidth: 560 }}
+      style={{ paddingBlock: "80px", textAlign: "center", maxWidth: 560 }}
     >
       <div className="eyebrow">{t("checkout.title")}</div>
       <h1
@@ -740,7 +740,7 @@ function SignInWall({ t }: { t: T }) {
   return (
     <section
       className="container-hf"
-      style={{ padding: "80px 0", textAlign: "center", maxWidth: 560 }}
+      style={{ paddingBlock: "80px", textAlign: "center", maxWidth: 560 }}
     >
       <div className="eyebrow">{t("checkout.title")}</div>
       <h1
@@ -781,7 +781,7 @@ function SignInWall({ t }: { t: T }) {
 
 function Skeleton() {
   return (
-    <section className="container-hf" style={{ padding: "80px 0" }}>
+    <section className="container-hf" style={{ paddingBlock: "80px" }}>
       <div
         style={{
           height: 280,

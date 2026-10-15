@@ -54,7 +54,7 @@ export function PlpClient({
 
   return (
     <>
-      <section className="container-hf" style={{ padding: "40px 0 24px" }}>
+      <section className="container-hf" style={{ paddingBlock: "40px 24px" }}>
         <nav
           style={{
             display: "flex",

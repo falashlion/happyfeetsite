@@ -417,7 +417,7 @@ function SignedIn({
   resumeLabel: (seconds: number) => string;
 }) {
   return (
-    <section className="container-hf" style={{ padding: "72px 0", maxWidth: 720 }}>
+    <section className="container-hf" style={{ paddingBlock: "72px", maxWidth: 720 }}>
       <div className="eyebrow">{t("nav.account")}</div>
       <h1
         style={{

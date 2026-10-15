@@ -73,7 +73,7 @@ export function BagClient({ blurs }: { blurs: Record<string, string> }) {
 
   return (
     <LazyMotion features={domAnimation} strict>
-      <section className="container-hf" style={{ padding: "40px 0 0" }}>
+      <section className="container-hf" style={{ paddingBlock: "40px 0" }}>
         <div className="eyebrow">{t("bag.eyebrow")}</div>
         <h1
           style={{
@@ -91,7 +91,7 @@ export function BagClient({ blurs }: { blurs: Record<string, string> }) {
 
       <section
         className="container-hf checkout-grid"
-        style={{ padding: "40px 0 80px" }}
+        style={{ paddingBlock: "40px 80px" }}
       >
         <div>
           <AnimatePresence initial={false}>
@@ -237,7 +237,7 @@ function EmptyState({ t }: { t: (k: string, v?: Record<string, string | number>)
   return (
     <section
       className="container-hf"
-      style={{ padding: "80px 0", textAlign: "center", maxWidth: 560 }}
+      style={{ paddingBlock: "80px", textAlign: "center", maxWidth: 560 }}
     >
       <div className="eyebrow">{t("bag.eyebrow")}</div>
       <h1
@@ -271,7 +271,7 @@ function EmptyState({ t }: { t: (k: string, v?: Record<string, string | number>)
 
 function BagSkeleton() {
   return (
-    <section className="container-hf" style={{ padding: "80px 0" }}>
+    <section className="container-hf" style={{ paddingBlock: "80px" }}>
       <div
         style={{
           height: 240,

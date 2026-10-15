@@ -105,7 +105,7 @@ export default async function HomePage() {
         </div>
       </div>
 
-      <section className="container-hf" style={{ padding: "88px 0 0" }}>
+      <section className="container-hf" style={{ paddingBlock: "88px 0" }}>
         <SectionHead
           eyebrow={t("home.section.shopby_eyebrow")}
           title={t("home.section.shopby_title")}
@@ -133,7 +133,7 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="container-hf" style={{ padding: "88px 0 0" }}>
+      <section className="container-hf" style={{ paddingBlock: "88px 0" }}>
         <SectionHead
           eyebrow={t("home.section.new_eyebrow")}
           title={t("home.section.new_title")}

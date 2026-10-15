@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function AboutPage() {
   const t = await tServer();
   return (
-    <section className="container-hf" style={{ padding: "72px 0", maxWidth: 720 }}>
+    <section className="container-hf" style={{ paddingBlock: "72px", maxWidth: 720 }}>
       <div className="eyebrow">{t("about.eyebrow")}</div>
       <h1
         style={{

@@ -139,7 +139,7 @@ export function ConfirmationClient() {
       </section>
 
       {order && (
-        <section className="container-hf" style={{ padding: "48px 0 80px", maxWidth: 720 }}>
+        <section className="container-hf" style={{ paddingBlock: "48px 80px", maxWidth: 720 }}>
           <h2
             style={{
               fontFamily: "var(--font-display)",
@@ -199,7 +199,7 @@ export function ConfirmationClient() {
       )}
 
       {err && (
-        <section className="container-hf" style={{ padding: "32px 0" }}>
+        <section className="container-hf" style={{ paddingBlock: "32px" }}>
           <p style={{ color: "var(--fg-muted)", fontSize: 13 }}>{err}</p>
         </section>
       )}

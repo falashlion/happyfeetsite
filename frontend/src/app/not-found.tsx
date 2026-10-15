@@ -4,7 +4,7 @@ import { tServer } from "@/lib/i18n/server";
 export default async function NotFound() {
   const t = await tServer();
   return (
-    <section className="container-hf" style={{ padding: "96px 0", textAlign: "center" }}>
+    <section className="container-hf" style={{ paddingBlock: "96px", textAlign: "center" }}>
       <div className="eyebrow">{t("notfound.eyebrow")}</div>
       <h1
         style={{
