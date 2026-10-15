@@ -110,6 +110,12 @@ export async function detachImage(productId: string, imageId: string): Promise<v
   });
 }
 
+export async function setPrimaryImage(productId: string, imageId: string): Promise<void> {
+  await apiFetch<void>(`/admin/products/${productId}/images/${imageId}/primary`, {
+    method: "POST",
+  });
+}
+
 /** The whole upload path in one call: sign, upload, attach. */
 export async function uploadProductImage(
   productId: string,
@@ -143,6 +149,44 @@ export type AdminProduct = {
 };
 
 type Envelope<T> = { data: T };
+
+export type AdminVariant = {
+  id: string;
+  size_eu: number;
+  color: string;
+  stock_qty: number;
+};
+
+/** Everything the editor needs, including drafts, every image and every variant. */
+export type AdminProductDetail = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  brand_id: string;
+  category_id: string;
+  base_price: number;
+  currency: string;
+  status: "draft" | "active" | "archived";
+  tags: string[];
+  images: ProductImage[];
+  skus: AdminVariant[];
+};
+
+export async function getAdminProduct(id: string): Promise<AdminProductDetail> {
+  return apiFetch<AdminProductDetail>(`/products/${id}`);
+}
+
+/** Replaces the product's sizes × colours and their stock in one go. */
+export async function setVariants(
+  id: string,
+  variants: { size_eu: number; color: string; stock_qty: number }[],
+): Promise<AdminProductDetail> {
+  return apiFetch<AdminProductDetail>(`/admin/products/${id}/variants`, {
+    method: "PUT",
+    body: { variants },
+  });
+}
 
 export type ProductFilters = {
   /** Name search. */
@@ -201,7 +245,8 @@ export type NewProduct = {
   tags?: string[];
   /** EU sizes to stock. Without a SKU the product cannot be added to a basket. */
   sizes?: number[];
-  color?: string;
+  /** Colourways; every size is stocked in each. */
+  colors?: string[];
   stock?: number;
   /** Publish straight away; the column otherwise defaults to draft. */
   status?: "draft" | "active";

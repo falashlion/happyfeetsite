@@ -416,8 +416,10 @@ func main() {
 			r.Get("/products", productH.AdminList)
 			r.Post("/products", productH.Create)
 			r.Patch("/products/{id}", productH.Update)
+			r.Put("/products/{id}/variants", productH.SetVariants)
 			r.Post("/products/{id}/images", productH.AddImage)
 			r.Delete("/products/{id}/images/{imageId}", productH.DeleteImage)
+			r.Post("/products/{id}/images/{imageId}/primary", productH.SetPrimaryImage)
 			r.Post("/categories", productH.CreateCategory)
 
 			// Fulfilment queue. Reads are unrestricted across customers and

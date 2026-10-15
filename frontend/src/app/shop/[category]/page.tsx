@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { HF_CATEGORIES, HF_PRODUCTS } from "@/lib/catalog";
+import { HF_CATEGORIES } from "@/lib/catalog";
 import { listProductsApi, listCategoriesApi } from "@/lib/api/products";
 import { PlpClient } from "./plp-client";
 import { getBlurMap } from "@/lib/placeholder";
@@ -74,9 +74,9 @@ export default async function CategoryPage({
     notFound();
   }
 
-  // Pull from the live API (with fallback to static catalog).
   const initial = await listProductsApi({ category, limit: 48 });
-  const allBrands = Array.from(new Set(HF_PRODUCTS.map((p) => p.brand))).sort();
+  // Offer only brands this category actually has.
+  const allBrands = Array.from(new Set(initial.map((p) => p.brand))).sort();
   const blurs = await getBlurMap(initial.map((p) => p.image));
 
   const name = apiCat?.name ?? nameFor(category, t);

@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Truck, RotateCcw, Shield } from "lucide-react";
-import { HF_PRODUCTS, HF_CATEGORIES } from "@/lib/catalog";
 import { getProductBySlugApi } from "@/lib/api/products";
 import { getBlurMap } from "@/lib/placeholder";
 import { formatPrice } from "@/lib/format";
@@ -12,10 +11,6 @@ import { PdpGalleryClient } from "./pdp-gallery";
 import { tServer } from "@/lib/i18n/server";
 
 export const dynamic = "force-dynamic";
-
-export function generateStaticParams() {
-  return HF_PRODUCTS.map((p) => ({ slug: p.slug }));
-}
 
 export async function generateMetadata({
   params,
@@ -42,8 +37,7 @@ export default async function ProductPage({
   if (!product) notFound();
 
   const blurs = await getBlurMap(product.images);
-  const category =
-    HF_CATEGORIES.find((c) => c.slug === product.category)?.name ?? product.category;
+  const category = product.categoryName || product.category;
 
   return (
     <section className="container-hf">

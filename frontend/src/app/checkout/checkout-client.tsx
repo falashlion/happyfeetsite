@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Banknote } from "lucide-react";
 import { useCart } from "@/store/cart";
 import { useCoupon } from "@/store/coupon";
-import { HF_PRODUCTS } from "@/lib/catalog";
 import { formatPrice } from "@/lib/format";
 import { computeTotals } from "@/lib/coupons";
 import { CouponBlock } from "@/components/coupon-block";
@@ -87,7 +86,7 @@ export function CheckoutClient() {
   useEffect(() => {
     const missing = items
       .map((it) => it.productId)
-      .filter((id) => !HF_PRODUCTS.find((p) => p.id === id) && !extra[id]);
+      .filter((id) => !extra[id]);
     if (missing.length === 0) return;
     let cancelled = false;
     Promise.all(missing.map((id) => getProductByIdApi(id))).then((results) => {
@@ -151,7 +150,7 @@ export function CheckoutClient() {
   const enriched = useMemo(
     () =>
       items.flatMap((it) => {
-        const product = HF_PRODUCTS.find((p) => p.id === it.productId) ?? extra[it.productId];
+        const product = extra[it.productId];
         return product ? [{ ...it, product }] : [];
       }),
     [items, extra],

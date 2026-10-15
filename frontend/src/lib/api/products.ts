@@ -1,11 +1,10 @@
 import type { Product, ProductColor, ProductSku, Currency } from "@/lib/types";
 import { apiFetch } from "./client";
-import {
-  HF_PRODUCTS,
-  getProductBySlug as localGetBySlug,
-  getProductById as localGetById,
-  listProducts as localListProducts,
-} from "@/lib/catalog";
+import { colorHex } from "@/lib/colors";
+
+// Shown when a product has no photo yet, instead of borrowing another
+// product's picture.
+export const NO_IMAGE = "/brand/packaging-giftbox.png";
 
 // ── Backend wire types ────────────────────────────────────────────────────────
 
@@ -42,6 +41,7 @@ type ApiProductDetail = {
   brand_id: string;
   category: string;
   category_id: string;
+  category_slug?: string;
   vendor_id: string;
   vendor_name: string;
   base_price: number;
@@ -62,6 +62,7 @@ type ApiProductSummary = {
   slug: string;
   brand: string;
   category: string;
+  category_slug?: string;
   base_price: number;
   final_price: number;
   currency: Currency;
@@ -99,18 +100,16 @@ function dedupeBy<T, K>(arr: T[], key: (v: T) => K): T[] {
   return out;
 }
 
-function inferCategory(label: string | undefined): string {
-  if (!label) return "sneakers";
-  const k = label.toLowerCase();
-  if (k.includes("sneaker")) return "sneakers";
-  if (k.includes("loafer")) return "loafers";
-  if (k.includes("boot")) return "boots";
-  if (k.includes("formal") || k.includes("dress")) return "formal";
-  if (k.includes("sandal")) return "sandals";
-  if (k.includes("men")) return "mens";
-  if (k.includes("women")) return "womens";
-  if (k.includes("kid")) return "kids";
-  return k.replace(/[^a-z]+/g, "-").replace(/(^-|-$)/g, "") || "sneakers";
+// The API sends the category's real slug. Older API builds did not, so derive
+// one from the label the same way the server slugifies — never by keyword
+// matching, which filed "Women's Shoes" under men's.
+function categorySlug(slug: string | undefined, label: string | undefined): string {
+  if (slug) return slug;
+  return (label ?? "")
+    .toLowerCase()
+    .replace(/'/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
 }
 
 function adaptDetail(p: ApiProductDetail): Product {
@@ -121,7 +120,7 @@ function adaptDetail(p: ApiProductDetail): Product {
     .filter((x): x is string => Boolean(x));
 
   const colors: ProductColor[] = dedupeBy(
-    p.skus.map((s) => ({ name: s.color, hex: s.color_hex ?? "#888888" })),
+    p.skus.map((s) => ({ name: s.color, hex: colorHex(s.color, s.color_hex) })),
     (c) => c.name,
   );
 
@@ -136,12 +135,12 @@ function adaptDetail(p: ApiProductDetail): Product {
       .every((s) => s.stock_qty <= 0),
   );
 
-  const fallbackImg = HF_PRODUCTS[0]?.image ?? "";
   return {
     id: p.id,
     slug: p.slug,
     brand: p.brand,
-    category: inferCategory(p.category),
+    category: categorySlug(p.category_slug, p.category),
+    categoryName: p.category ?? "",
     name: p.name,
     subtitle: (p.tags && p.tags[0]) ?? p.category ?? "",
     price: Number(p.final_price ?? p.base_price ?? 0),
@@ -151,8 +150,8 @@ function adaptDetail(p: ApiProductDetail): Product {
         : null,
     currency: (p.currency as Currency) ?? "XAF",
     badge: null,
-    image: images[0] ?? fallbackImg,
-    images: images.length ? images : [fallbackImg],
+    image: images[0] ?? NO_IMAGE,
+    images: images.length ? images : [NO_IMAGE],
     sizes: allSizes,
     oosSizes,
     colors: colors.length ? colors : [{ name: "Default", hex: "#15161B" }],
@@ -172,12 +171,13 @@ function adaptDetail(p: ApiProductDetail): Product {
 }
 
 function adaptSummary(p: ApiProductSummary): Product {
-  const img = bestImage(p.primary_image) ?? HF_PRODUCTS[0]?.image ?? "";
+  const img = bestImage(p.primary_image) ?? NO_IMAGE;
   return {
     id: p.id,
     slug: p.slug,
     brand: p.brand,
-    category: inferCategory(p.category),
+    category: categorySlug(p.category_slug, p.category),
+    categoryName: p.category ?? "",
     name: p.name,
     subtitle: "",
     price: Number(p.final_price ?? p.base_price ?? 0),
@@ -200,7 +200,10 @@ function adaptSummary(p: ApiProductSummary): Product {
   };
 }
 
-// ── Public API (graceful fallback to local catalog) ───────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
+//
+// No demo fallback: an empty category shows as empty. Filling it with bundled
+// sample shoes made every category look stocked with things nobody sells.
 
 export async function listProductsApi(opts: {
   category?: string;
@@ -223,14 +226,7 @@ export async function listProductsApi(opts: {
     soft: true,
     timeoutMs: 3000,
   });
-  if (!res || !res.data || res.data.length === 0) {
-    return localListProducts({
-      category: opts.category,
-      brand: opts.brand,
-      sort: opts.sort,
-    });
-  }
-  return res.data.map(adaptSummary);
+  return (res?.data ?? []).map(adaptSummary);
 }
 
 export async function getProductBySlugApi(slug: string): Promise<Product | null> {
@@ -239,22 +235,19 @@ export async function getProductBySlugApi(slug: string): Promise<Product | null>
     soft: true,
     timeoutMs: 3000,
   });
-  if (!res) return localGetBySlug(slug) ?? null;
-  return adaptDetail(res);
+  return res ? adaptDetail(res) : null;
 }
 
 export async function getProductByIdApi(id: string): Promise<Product | null> {
-  // Try API first if id looks like a UUID; otherwise treat as a local id.
+  // Old baskets can still hold demo ids ("p007"); they have no product.
   const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-  if (looksUuid) {
-    const res = await apiFetch<ApiProductDetail>(`/products/${id}`, {
-      auth: false,
-      soft: true,
-      timeoutMs: 3000,
-    });
-    if (res) return adaptDetail(res);
-  }
-  return localGetById(id) ?? null;
+  if (!looksUuid) return null;
+  const res = await apiFetch<ApiProductDetail>(`/products/${id}`, {
+    auth: false,
+    soft: true,
+    timeoutMs: 3000,
+  });
+  return res ? adaptDetail(res) : null;
 }
 
 export async function listCategoriesApi(): Promise<

@@ -1,7 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, Truck, RotateCcw, Shield, Sparkles } from "lucide-react";
-import { HF_PRODUCTS } from "@/lib/catalog";
 import { listProductsApi } from "@/lib/api/products";
 import { ProductCard } from "@/components/product-card";
 import { SectionHead } from "@/components/section-head";
@@ -11,14 +10,26 @@ import { tServer } from "@/lib/i18n/server";
 // Server pages depend on the locale cookie — never cache.
 export const dynamic = "force-dynamic";
 
+const STOCK_HERO =
+  "https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=1200&q=80&auto=format&fit=crop";
+const STOCK_EDITORIAL =
+  "https://images.unsplash.com/photo-1614253429340-98120bd6d753?w=1200&q=80&auto=format&fit=crop";
+
 export default async function HomePage() {
   const t = await tServer();
-  const all = await listProductsApi({ limit: 24 });
-  const source = all.length > 0 ? all : HF_PRODUCTS;
+  const source = await listProductsApi({ limit: 24 });
   const featured = source.slice(0, 4);
   const houseFavs = source.slice(4, 8);
-  const editorial = source[1] ?? source[0];
+  // Real products when there are some. Until then the hero and editorial use
+  // plain photography rather than pretending a sample shoe is for sale.
   const heroProduct = source[2] ?? source[0];
+  const editorialProduct = source[1] ?? source[0];
+  const hero = heroProduct
+    ? { src: heroProduct.image, alt: `${heroProduct.brand} ${heroProduct.name}` }
+    : { src: STOCK_HERO, alt: "" };
+  const editorial = editorialProduct
+    ? { src: editorialProduct.image, alt: `${editorialProduct.brand} ${editorialProduct.name}` }
+    : { src: STOCK_EDITORIAL, alt: "" };
 
   const CATEGORIES = [
     { slug: "sneakers", label: t("home.cat.sneakers.label"), sub: t("home.cat.sneakers.sub"), src: "https://images.unsplash.com/photo-1606107557195-0e29a4b5b4aa?w=800&q=80" },
@@ -35,8 +46,8 @@ export default async function HomePage() {
   ];
 
   const allImages = [
-    heroProduct.image,
-    editorial.image,
+    hero.src,
+    editorial.src,
     ...featured.map((p) => p.image),
     ...houseFavs.map((p) => p.image),
     ...CATEGORIES.map((c) => c.src),
@@ -61,25 +72,27 @@ export default async function HomePage() {
               <Link href="/shop/sneakers" className="btn btn-gold btn-lg">
                 {t("home.cta_browse")} <ArrowRight size={18} strokeWidth={1.5} />
               </Link>
-              <Link
-                href={`/product/${heroProduct.slug}`}
-                className="btn btn-secondary btn-lg"
-                style={{ color: "var(--hf-cream-50)", borderColor: "var(--hf-cream-50)" }}
-              >
-                {t("home.cta_hero_product")}
-              </Link>
+              {heroProduct && (
+                <Link
+                  href={`/product/${heroProduct.slug}`}
+                  className="btn btn-secondary btn-lg"
+                  style={{ color: "var(--hf-cream-50)", borderColor: "var(--hf-cream-50)" }}
+                >
+                  {t("home.cta_hero_product")}
+                </Link>
+              )}
             </div>
           </div>
           <div className="figure">
             <div className="photo">
               <Image
-                src={heroProduct.image}
-                alt={`${heroProduct.brand} ${heroProduct.name}`}
+                src={hero.src}
+                alt={hero.alt}
                 fill
                 priority
                 sizes="(max-width: 860px) 100vw, 600px"
                 placeholder="blur"
-                blurDataURL={blurs[heroProduct.image]}
+                blurDataURL={blurs[hero.src]}
               />
             </div>
             <div className="seal">
@@ -133,6 +146,7 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {featured.length > 0 && (
       <section className="container-hf" style={{ paddingBlock: "88px 0" }}>
         <SectionHead
           eyebrow={t("home.section.new_eyebrow")}
@@ -154,17 +168,18 @@ export default async function HomePage() {
           ))}
         </div>
       </section>
+      )}
 
       <section className="container-hf">
         <div className="editorial">
           <div className="ed-img">
             <Image
-              src={editorial.image}
-              alt={`${editorial.brand} ${editorial.name}`}
+              src={editorial.src}
+              alt={editorial.alt}
               fill
               sizes="(max-width: 860px) 100vw, 600px"
               placeholder="blur"
-              blurDataURL={blurs[editorial.image]}
+              blurDataURL={blurs[editorial.src]}
             />
           </div>
           <div className="ed-body">
@@ -178,6 +193,7 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {houseFavs.length > 0 && (
       <section className="container-hf" style={{ paddingBottom: 32 }}>
         <SectionHead
           eyebrow={t("home.section.favs_eyebrow")}
@@ -189,6 +205,7 @@ export default async function HomePage() {
           ))}
         </div>
       </section>
+      )}
     </>
   );
 }

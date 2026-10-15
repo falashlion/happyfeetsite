@@ -132,7 +132,6 @@ jobs:
             deploy/docker-compose.prod.yml \
             deploy/Caddyfile \
             deploy/backup.sh \
-            backend/migrations/seed_products.sql \
             "$USER@$HOST:/opt/happyfeet/"
 
       - name: Migrate, then roll

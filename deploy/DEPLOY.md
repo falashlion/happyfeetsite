@@ -312,9 +312,6 @@ cd /opt/happyfeet
 # Everything up?
 docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 
-# Load the catalogue (once — the site is empty without it)
-docker exec -i happyfeet-postgres-1 psql -U happyfeet -d happyfeet < seed_products.sql
-
 # Prove BOTH relays independently. A normal send only proves that *some*
 # relay works, which hides a broken second provider completely.
 docker compose -f docker-compose.prod.yml --env-file .env.prod \

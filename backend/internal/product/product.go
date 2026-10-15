@@ -53,6 +53,9 @@ type Product struct {
 	VendorName   string
 	CategoryID   string
 	CategoryName string
+	// CategorySlug is what the storefront links to. Without it the client had
+	// to guess a slug from the label, and "Women's Shoes" contains "men".
+	CategorySlug string
 	BrandID      string
 	BrandName    string
 	Name         string
@@ -188,7 +191,7 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]*Product, string
 	where := strings.Join(conds, " AND ")
 
 	rows, err := r.db.Query(ctx, fmt.Sprintf(`
-		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,p.brand_id,b.name,
+		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,c.slug,p.brand_id,b.name,
 		       p.name,p.slug,p.description,p.base_price,p.currency,p.status,p.tags,
 		       p.rating_avg,p.rating_count,p.created_at,p.updated_at,
 		       EXISTS(SELECT 1 FROM product_skus sk WHERE sk.product_id=p.id AND sk.stock_qty>0) as in_stock,
@@ -210,7 +213,7 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]*Product, string
 	for rows.Next() {
 		p := &Product{}
 		var imgID, imgMed, imgThumb, imgLarge string
-		if err := rows.Scan(&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName,
+		if err := rows.Scan(&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName, &p.CategorySlug,
 			&p.BrandID, &p.BrandName, &p.Name, &p.Slug, &p.Description, &p.BasePrice, &p.Currency,
 			&p.Status, &p.Tags, &p.RatingAvg, &p.RatingCount, &p.CreatedAt, &p.UpdatedAt, &p.InStock,
 			&imgID, &imgMed, &imgThumb, &imgLarge); err != nil {
@@ -236,7 +239,7 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]*Product, string
 func (r *Repository) Search(ctx context.Context, q string, limit int, cursor *string) ([]*Product, string, int64, error) {
 	pattern := "%" + q + "%"
 	rows, err := r.db.Query(ctx, `
-		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,p.brand_id,b.name,
+		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,c.slug,p.brand_id,b.name,
 		       p.name,p.slug,p.description,p.base_price,p.currency,p.status,p.tags,
 		       p.rating_avg,p.rating_count,p.created_at,p.updated_at,
 		       EXISTS(SELECT 1 FROM product_skus sk WHERE sk.product_id=p.id AND sk.stock_qty>0) as in_stock,
@@ -260,7 +263,7 @@ func (r *Repository) Search(ctx context.Context, q string, limit int, cursor *st
 	for rows.Next() {
 		p := &Product{}
 		var imgID, imgMed, imgThumb, imgLarge string
-		if err := rows.Scan(&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName,
+		if err := rows.Scan(&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName, &p.CategorySlug,
 			&p.BrandID, &p.BrandName, &p.Name, &p.Slug, &p.Description, &p.BasePrice, &p.Currency,
 			&p.Status, &p.Tags, &p.RatingAvg, &p.RatingCount, &p.CreatedAt, &p.UpdatedAt, &p.InStock,
 			&imgID, &imgMed, &imgThumb, &imgLarge); err != nil {
@@ -291,7 +294,7 @@ func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Product, erro
 func (r *Repository) get(ctx context.Context, cond, val string) (*Product, error) {
 	p := &Product{}
 	err := r.db.QueryRow(ctx, fmt.Sprintf(`
-		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,p.brand_id,b.name,
+		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,c.slug,p.brand_id,b.name,
 		       p.name,p.slug,p.description,p.base_price,p.currency,p.status,p.tags,
 		       p.rating_avg,p.rating_count,p.created_at,p.updated_at,
 		       EXISTS(SELECT 1 FROM product_skus sk WHERE sk.product_id=p.id AND sk.stock_qty>0)
@@ -300,7 +303,7 @@ func (r *Repository) get(ctx context.Context, cond, val string) (*Product, error
 		JOIN categories c ON c.id=p.category_id
 		JOIN brands b ON b.id=p.brand_id
 		WHERE %s`, cond), val).Scan(
-		&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName,
+		&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName, &p.CategorySlug,
 		&p.BrandID, &p.BrandName, &p.Name, &p.Slug, &p.Description, &p.BasePrice, &p.Currency,
 		&p.Status, &p.Tags, &p.RatingAvg, &p.RatingCount, &p.CreatedAt, &p.UpdatedAt, &p.InStock)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -354,7 +357,7 @@ func (r *Repository) skus(ctx context.Context, productID string) ([]SKU, error) 
 
 func (r *Repository) simpleList(ctx context.Context, orderBy string, limit int) ([]*Product, error) {
 	rows, err := r.db.Query(ctx, fmt.Sprintf(`
-		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,p.brand_id,b.name,
+		SELECT p.id,p.vendor_id,v.business_name,p.category_id,c.name,c.slug,p.brand_id,b.name,
 		       p.name,p.slug,p.description,p.base_price,p.currency,p.status,p.tags,
 		       p.rating_avg,p.rating_count,p.created_at,p.updated_at,
 		       EXISTS(SELECT 1 FROM product_skus sk WHERE sk.product_id=p.id AND sk.stock_qty>0),
@@ -376,7 +379,7 @@ func (r *Repository) simpleList(ctx context.Context, orderBy string, limit int) 
 	for rows.Next() {
 		p := &Product{}
 		var imgID, imgMed, imgThumb, imgLarge string
-		if err := rows.Scan(&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName,
+		if err := rows.Scan(&p.ID, &p.VendorID, &p.VendorName, &p.CategoryID, &p.CategoryName, &p.CategorySlug,
 			&p.BrandID, &p.BrandName, &p.Name, &p.Slug, &p.Description, &p.BasePrice, &p.Currency,
 			&p.Status, &p.Tags, &p.RatingAvg, &p.RatingCount, &p.CreatedAt, &p.UpdatedAt, &p.InStock,
 			&imgID, &imgMed, &imgThumb, &imgLarge); err == nil {
@@ -493,16 +496,67 @@ func (r *Repository) AddSKUs(ctx context.Context, productID string, skus []NewSK
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if _, err := upsertSKUs(ctx, tx, productID, skus); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// skuCode is the stable identity of one variant, so re-saving the same size in
+// the same colour updates that row instead of creating a second one.
+func skuCode(productID string, s NewSKU) string {
+	return fmt.Sprintf("%s-%s-%g", strings.ToUpper(productID[:8]),
+		strings.ToUpper(slugify(s.Color)), s.SizeEU)
+}
+
+func upsertSKUs(ctx context.Context, tx pgx.Tx, productID string, skus []NewSKU) ([]string, error) {
+	codes := make([]string, 0, len(skus))
 	for _, s := range skus {
-		code := fmt.Sprintf("%s-%s-%g", strings.ToUpper(productID[:8]),
-			strings.ToUpper(slugify(s.Color)), s.SizeEU)
+		code := skuCode(productID, s)
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO product_skus(product_id,sku_code,size_eu,color,stock_qty)
 			VALUES($1,$2,$3,$4,$5)
-			ON CONFLICT (sku_code) DO UPDATE SET stock_qty=EXCLUDED.stock_qty`,
+			ON CONFLICT (sku_code) DO UPDATE
+			SET stock_qty=EXCLUDED.stock_qty,color=EXCLUDED.color,is_active=true`,
 			productID, code, s.SizeEU, s.Color, s.StockQty); err != nil {
-			return err
+			return nil, err
 		}
+		codes = append(codes, code)
+	}
+	return codes, nil
+}
+
+// SetVariants makes the product's active SKUs exactly the given list.
+//
+// Variants that are dropped are deactivated, not deleted: cart_items and
+// order_items reference SKUs, and an old order must still say what was bought.
+// Their stock drops to whatever is reserved (the CHECK forbids less), so a
+// deactivated row cannot count as "in stock".
+func (r *Repository) SetVariants(ctx context.Context, productID string, skus []NewSKU) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var exists bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND deleted_at IS NULL)`, productID,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+
+	codes, err := upsertSKUs(ctx, tx, productID, skus)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE product_skus SET is_active=false,stock_qty=reserved_qty
+		WHERE product_id=$1 AND NOT (sku_code = ANY($2))`, productID, codes); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }
@@ -627,15 +681,60 @@ func (r *Repository) AddImage(ctx context.Context, productID, cloudName string, 
 	return id, tx.Commit(ctx)
 }
 
+// DeleteImage removes one image. If it was the cover, the next image in order
+// takes over, so removing the cover never leaves a product with photos but no
+// primary — every listing reads only the primary.
 func (r *Repository) DeleteImage(ctx context.Context, productID, imageID string) error {
-	res, err := r.db.Exec(ctx, `DELETE FROM product_images WHERE id=$1 AND product_id=$2`, imageID, productID)
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if res.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var wasPrimary bool
+	err = tx.QueryRow(ctx,
+		`DELETE FROM product_images WHERE id=$1 AND product_id=$2 RETURNING is_primary`,
+		imageID, productID).Scan(&wasPrimary)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if wasPrimary {
+		if _, err := tx.Exec(ctx, `
+			UPDATE product_images SET is_primary=true
+			WHERE id=(SELECT id FROM product_images WHERE product_id=$1
+			          ORDER BY sort_order,created_at LIMIT 1)`, productID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// SetPrimaryImage makes one image the cover and demotes the rest together.
+func (r *Repository) SetPrimaryImage(ctx context.Context, productID, imageID string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	res, err := tx.Exec(ctx,
+		`UPDATE product_images SET is_primary=(id=$2) WHERE product_id=$1`, productID, imageID)
+	if err != nil {
+		return err
+	}
+	var found bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM product_images WHERE id=$2 AND product_id=$1)`,
+		productID, imageID).Scan(&found); err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 || !found {
+		return ErrNotFound
+	}
+	return tx.Commit(ctx)
 }
 
 // Renditions are the fixed sizes product_images stores, matching the column
@@ -911,8 +1010,11 @@ type createProductReq struct {
 	// Sizes are the EU sizes to stock. Without at least one the product has no
 	// SKU, and cart_items.sku_id is NOT NULL — it would be unbuyable.
 	Sizes []float64 `json:"sizes"      validate:"omitempty,dive,gt=0"`
-	Color string    `json:"color"      validate:"omitempty,max=50"`
-	Stock int       `json:"stock"      validate:"omitempty,gte=0"`
+	// Colors are the colourways it comes in; every size is stocked in each.
+	// Color is the older single-colour form, still accepted.
+	Colors []string `json:"colors"     validate:"omitempty,max=20,dive,required,max=50"`
+	Color  string   `json:"color"      validate:"omitempty,max=50"`
+	Stock  int      `json:"stock"      validate:"omitempty,gte=0"`
 	// Status lets the console publish immediately. The column defaults to
 	// 'draft', which is invisible on the storefront.
 	Status string `json:"status" validate:"omitempty,oneof=draft active"`
@@ -971,13 +1073,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if len(sizes) == 0 {
 		sizes = []float64{39, 40, 41, 42, 43, 44}
 	}
-	color := req.Color
-	if color == "" {
-		color = "Default"
+	colors := dedupeColors(append(req.Colors, req.Color))
+	if len(colors) == 0 {
+		colors = []string{"Default"}
 	}
-	skus := make([]NewSKU, 0, len(sizes))
-	for _, sz := range sizes {
-		skus = append(skus, NewSKU{SizeEU: sz, Color: color, StockQty: req.Stock})
+	skus := make([]NewSKU, 0, len(sizes)*len(colors))
+	for _, c := range colors {
+		for _, sz := range sizes {
+			skus = append(skus, NewSKU{SizeEU: sz, Color: c, StockQty: req.Stock})
+		}
 	}
 	if err := h.repo.AddSKUs(r.Context(), id, skus); err != nil {
 		log.Error().Err(err).Str("rid", rid).Str("product", id).Msg("add skus")
@@ -1101,17 +1205,18 @@ func fmtList(products []*Product) []map[string]any {
 	out := make([]map[string]any, 0, len(products))
 	for _, p := range products {
 		out = append(out, map[string]any{
-			"id":           p.ID,
-			"name":         p.Name,
-			"slug":         p.Slug,
-			"brand":        p.BrandName,
-			"category":     p.CategoryName,
-			"base_price":   p.BasePrice,
-			"final_price":  p.FinalPrice,
-			"currency":     p.Currency,
-			"rating_avg":   p.RatingAvg,
-			"rating_count": p.RatingCount,
-			"in_stock":     p.InStock,
+			"id":            p.ID,
+			"name":          p.Name,
+			"slug":          p.Slug,
+			"brand":         p.BrandName,
+			"category":      p.CategoryName,
+			"category_slug": p.CategorySlug,
+			"base_price":    p.BasePrice,
+			"final_price":   p.FinalPrice,
+			"currency":      p.Currency,
+			"rating_avg":    p.RatingAvg,
+			"rating_count":  p.RatingCount,
+			"in_stock":      p.InStock,
 			// The console lists drafts and archived products and needs to say
 			// which is which; the storefront only ever sees active ones.
 			"status":        p.Status,
@@ -1139,7 +1244,7 @@ func fmtDetail(p *Product) map[string]any {
 	}
 	return map[string]any{
 		"id": p.ID, "name": p.Name, "slug": p.Slug, "description": p.Description,
-		"brand": p.BrandName, "brand_id": p.BrandID, "category": p.CategoryName, "category_id": p.CategoryID,
+		"brand": p.BrandName, "brand_id": p.BrandID, "category": p.CategoryName, "category_id": p.CategoryID, "category_slug": p.CategorySlug,
 		"vendor_id": p.VendorID, "vendor_name": p.VendorName,
 		"base_price": p.BasePrice, "final_price": p.FinalPrice, "currency": p.Currency,
 		"status": p.Status, "tags": p.Tags, "rating_avg": p.RatingAvg, "rating_count": p.RatingCount,
@@ -1348,6 +1453,111 @@ func (h *Handler) DeleteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.repo.DeleteImage(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "imageId"))
+	if errors.Is(err, ErrNotFound) {
+		response.NotFound(w, "Image", rid)
+		return
+	}
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+	response.NoContent(w)
+}
+
+// dedupeColors trims names and drops blanks and case-insensitive repeats —
+// "Black" and "black" would otherwise share a sku_code and overwrite each other.
+func dedupeColors(in []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, c := range in {
+		c = strings.TrimSpace(c)
+		k := strings.ToLower(c)
+		if c == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+type variantReq struct {
+	SizeEU   float64 `json:"size_eu"   validate:"gt=0"`
+	Color    string  `json:"color"     validate:"required,max=50"`
+	StockQty int     `json:"stock_qty" validate:"gte=0"`
+}
+
+type setVariantsReq struct {
+	Variants []variantReq `json:"variants" validate:"required,min=1,max=500,dive"`
+}
+
+// SetVariants godoc
+// @Summary      Replace a product's sizes, colours and stock (admin)
+// @Tags         products
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Product UUID"
+// @Success      200  {object}  map[string]any
+// @Router       /admin/products/{id}/variants [put]
+func (h *Handler) SetVariants(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	id := chi.URLParam(r, "id")
+	if !isUUID(id) {
+		response.NotFound(w, "Product", rid)
+		return
+	}
+	var req setVariantsReq
+	if err := validator.Decode(r, &req); err != nil {
+		response.ValidationError(w, err, rid)
+		return
+	}
+
+	skus := make([]NewSKU, 0, len(req.Variants))
+	seen := map[string]bool{}
+	for _, v := range req.Variants {
+		s := NewSKU{SizeEU: v.SizeEU, Color: strings.TrimSpace(v.Color), StockQty: v.StockQty}
+		code := skuCode(id, s)
+		if seen[code] {
+			response.BadRequest(w, fmt.Sprintf("EU %g in %s is listed twice", s.SizeEU, s.Color), rid)
+			return
+		}
+		seen[code] = true
+		skus = append(skus, s)
+	}
+
+	err := h.repo.SetVariants(r.Context(), id, skus)
+	if errors.Is(err, ErrNotFound) {
+		response.NotFound(w, "Product", rid)
+		return
+	}
+	if err != nil {
+		log.Error().Err(err).Str("rid", rid).Str("product", id).Msg("set variants")
+		response.InternalError(w, rid)
+		return
+	}
+
+	p, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+	response.Ok(w, fmtDetail(p))
+}
+
+// SetPrimaryImage godoc
+// @Summary      Make an image the product's cover (admin)
+// @Tags         products
+// @Security     BearerAuth
+// @Param        id       path  string  true  "Product UUID"
+// @Param        imageId  path  string  true  "Image UUID"
+// @Success      204
+// @Router       /admin/products/{id}/images/{imageId}/primary [post]
+func (h *Handler) SetPrimaryImage(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	if !isUUID(chi.URLParam(r, "id")) || !isUUID(chi.URLParam(r, "imageId")) {
+		response.NotFound(w, "Image", rid)
+		return
+	}
+	err := h.repo.SetPrimaryImage(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "imageId"))
 	if errors.Is(err, ErrNotFound) {
 		response.NotFound(w, "Image", rid)
 		return

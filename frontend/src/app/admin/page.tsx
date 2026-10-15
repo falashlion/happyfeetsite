@@ -14,10 +14,12 @@ import {
   updateProduct, uploadProductImage, listPromotions, createPromotion,
   setPromotionActive, broadcastNotification,
   listAdminOrders, getAdminOrder, updateOrderStatus,
-  type AdminProduct, type Category, type Brand, type Promotion, type ProductPatch,
-  type ProductFilters, type AdminOrder, type OrderStatus, type OrderFilters,
+  getAdminProduct, setVariants, detachImage, setPrimaryImage,
+  type AdminProduct, type AdminProductDetail, type Category, type Brand, type Promotion,
+  type ProductPatch, type ProductFilters, type AdminOrder, type OrderStatus, type OrderFilters,
 } from "@/lib/api/admin";
 import { formatPrice } from "@/lib/format";
+import { COLOR_NAMES, colorHex } from "@/lib/colors";
 
 type Tab = "orders" | "catalogue" | "new" | "categories" | "discounts" | "announce";
 type Msg = { kind: "ok" | "error"; text: string } | null;
@@ -142,10 +144,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // The sizes and colours a shoe shop actually stocks. "Other" stays available
 // because no fixed list survives contact with a real catalogue.
 const EU_SIZES = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48];
-const COLORS = [
-  "Black", "White", "Brown", "Tan", "Navy", "Grey",
-  "Beige", "Red", "Green", "Blue", "Gold", "Silver",
-];
 
 const input = "w-full rounded border border-neutral-300 px-3 py-2 text-sm";
 const primary = "rounded bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-50";
@@ -669,10 +667,7 @@ function Catalogue() {
     return (
       <div>
         {filterBar}
-        <p className="text-sm">
-          Your catalogue is empty. Anything you see on the storefront right now is demo content
-          bundled with the site, not real products.
-        </p>
+        <p className="text-sm">Your catalogue is empty.</p>
         <p className="mt-2 text-sm text-neutral-500">
           Use <strong>New product</strong> to add your first one.
         </p>
@@ -721,65 +716,360 @@ function Catalogue() {
   );
 }
 
+// ── Shared pickers ────────────────────────────────────────────────────────────
+
+const chip = (on: boolean) =>
+  `rounded border px-2.5 py-1.5 text-sm transition ${
+    on ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-300 hover:border-neutral-500"
+  }`;
+
+function SizePicker({ sizes, onChange }: { sizes: number[]; onChange: (s: number[]) => void }) {
+  const [other, setOther] = useState("");
+  return (
+    <div>
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        Sizes (EU)
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {Array.from(new Set([...EU_SIZES, ...sizes])).sort((a, b) => a - b).map((sz) => {
+          const on = sizes.includes(sz);
+          return (
+            <button key={sz} type="button" aria-pressed={on} className={`min-w-[3rem] ${chip(on)}`}
+              onClick={() => onChange(on ? sizes.filter((v) => v !== sz) : [...sizes, sz])}>
+              {sz}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <input value={other} onChange={(e) => setOther(e.target.value)} inputMode="decimal"
+          placeholder="Other size" className="w-32 rounded border border-neutral-300 px-2 py-1 text-sm" />
+        <button type="button"
+          onClick={() => {
+            const v = Number(other.trim());
+            if (Number.isFinite(v) && v > 0 && !sizes.includes(v)) onChange([...sizes, v]);
+            setOther("");
+          }}
+          className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50">
+          Add
+        </button>
+        <span className="text-xs text-neutral-500">{sizes.length} selected</span>
+      </div>
+    </div>
+  );
+}
+
+function ColorPicker({ colors, onChange }: { colors: string[]; onChange: (c: string[]) => void }) {
+  const [other, setOther] = useState("");
+  const has = (c: string) => colors.some((x) => x.toLowerCase() === c.toLowerCase());
+  const options = [...COLOR_NAMES, ...colors.filter((c) => !COLOR_NAMES.some((n) => n.toLowerCase() === c.toLowerCase()))];
+  return (
+    <div>
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        Colours
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((c) => {
+          const on = has(c);
+          return (
+            <button key={c} type="button" aria-pressed={on} className={`flex items-center gap-1.5 ${chip(on)}`}
+              onClick={() => onChange(on ? colors.filter((x) => x.toLowerCase() !== c.toLowerCase()) : [...colors, c])}>
+              <span aria-hidden className="inline-block h-3 w-3 rounded-full border border-neutral-300"
+                style={{ background: colorHex(c) }} />
+              {c}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <input value={other} onChange={(e) => setOther(e.target.value)} placeholder="Other colour"
+          className="w-40 rounded border border-neutral-300 px-2 py-1 text-sm" />
+        <button type="button"
+          onClick={() => {
+            const v = other.trim();
+            if (v && !has(v)) onChange([...colors, v]);
+            setOther("");
+          }}
+          className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50">
+          Add
+        </button>
+        <span className="text-xs text-neutral-500">
+          {colors.length} selected — every size is stocked in each
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Editor ────────────────────────────────────────────────────────────────────
+
+const variantKey = (color: string, size: number) => `${color.toLowerCase()}|${size}`;
+
 function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Promise<void> }) {
-  const [name, setName] = useState(product.name);
-  const [price, setPrice] = useState(String(product.base_price));
-  const [status, setStatus] = useState<"draft" | "active" | "archived">("active");
+  const [detail, setDetail] = useState<AdminProductDetail | null>(null);
+  const [cats, setCats] = useState<Category[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [form, setForm] = useState({
+    name: "", description: "", price: "", currency: "XAF",
+    category_id: "", brand_id: "", status: "active" as AdminProductDetail["status"], tags: "",
+  });
+  const [sizes, setSizes] = useState<number[]>([]);
+  const [colors, setColors] = useState<string[]>([]);
+  // Stock per colour × size, as typed. Combinations not in here start at 0.
+  const [stock, setStock] = useState<Record<string, string>>({});
+  const [fillAll, setFillAll] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const images = product.primary_image
-    ? [product.primary_image.url_medium ?? product.primary_image.url_thumbnail ?? ""]
-    : [];
+  // Seeds the form from the server's copy, so what you edit is what is stored
+  // — not the trimmed-down list row.
+  const load = useCallback((d: AdminProductDetail) => {
+    setDetail(d);
+    setForm({
+      name: d.name,
+      description: d.description ?? "",
+      price: String(d.base_price),
+      currency: d.currency,
+      category_id: d.category_id,
+      brand_id: d.brand_id,
+      status: d.status,
+      tags: (d.tags ?? []).join(", "),
+    });
+    const skus = d.skus ?? [];
+    setSizes(Array.from(new Set(skus.map((s) => s.size_eu))).sort((a, b) => a - b));
+    setColors(skus.reduce<string[]>(
+      (acc, s) => (acc.some((c) => c.toLowerCase() === s.color.toLowerCase()) ? acc : [...acc, s.color]), []));
+    setStock(Object.fromEntries(skus.map((s) => [variantKey(s.color, s.size_eu), String(s.stock_qty)])));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getAdminProduct(product.id), listCategories(), listBrands()])
+      .then(([d, c, b]) => {
+        if (cancelled) return;
+        setCats(c); setBrands(b); load(d);
+      })
+      .catch((e) => { if (!cancelled) setMsg({ kind: "error", text: errText(e, "Could not load the product.") }); });
+    return () => { cancelled = true; };
+  }, [product.id, load]);
+
+  if (!detail) {
+    return <section><p className="text-sm text-neutral-500">Loading product…</p><Note msg={msg} /></section>;
+  }
+
+  const images = [...(detail.images ?? [])].sort(
+    (a, b) => Number(b.is_primary) - Number(a.is_primary) || a.sort_order - b.sort_order);
+
+  const variants = colors.flatMap((c) =>
+    sizes.map((sz) => ({ size_eu: sz, color: c, stock_qty: Math.max(0, Math.floor(Number(stock[variantKey(c, sz)]) || 0)) })));
+
+  const variantsChanged = (() => {
+    const before = (detail.skus ?? [])
+      .map((s) => `${variantKey(s.color, s.size_eu)}=${s.stock_qty}`).sort().join(",");
+    const after = variants.map((v) => `${variantKey(v.color, v.size_eu)}=${v.stock_qty}`).sort().join(",");
+    return before !== after;
+  })();
+
+  async function refresh() {
+    load(await getAdminProduct(product.id));
+    await onSaved();
+  }
 
   async function save() {
+    if (!detail) return;
+    const price = Number(form.price);
+    if (!Number.isFinite(price) || price < 0) {
+      setMsg({ kind: "error", text: "Enter a valid price." });
+      return;
+    }
+    if (variants.length === 0) {
+      setMsg({ kind: "error", text: "Keep at least one size and one colour — without both it cannot be bought." });
+      return;
+    }
     setBusy(true); setMsg(null);
+
     // Send only what changed: absent fields are left untouched server-side, so
     // a concurrent edit to a field we did not alter survives.
-    const patch: ProductPatch = { status };
-    if (name !== product.name) patch.name = name;
-    const parsed = Number(price);
-    if (Number.isFinite(parsed) && parsed !== product.base_price) patch.base_price = parsed;
+    const patch: ProductPatch = {};
+    if (form.name.trim() !== detail.name) patch.name = form.name.trim();
+    if (form.description.trim() !== (detail.description ?? "")) patch.description = form.description.trim();
+    if (price !== detail.base_price) patch.base_price = price;
+    if (form.currency !== detail.currency) patch.currency = form.currency;
+    if (form.category_id !== detail.category_id) patch.category_id = form.category_id;
+    if (form.brand_id !== detail.brand_id) patch.brand_id = form.brand_id;
+    if (form.status !== detail.status) patch.status = form.status;
+    const tags = form.tags.split(",").map((t) => t.trim()).filter(Boolean);
+    if (tags.join("\u0000") !== (detail.tags ?? []).join("\u0000")) patch.tags = tags;
 
     try {
-      await updateProduct(product.id, patch);
-      await onSaved();
+      if (Object.keys(patch).length > 0) await updateProduct(detail.id, patch);
+      if (variantsChanged) await setVariants(detail.id, variants);
+      await refresh();
       setMsg({ kind: "ok", text: "Saved." });
     } catch (e) {
       setMsg({ kind: "error", text: errText(e, "Save failed.") });
     } finally { setBusy(false); }
   }
 
-  async function upload(file: File) {
+  async function upload(files: File[]) {
+    if (!detail) return;
+    setBusy(true); setMsg(null);
+    let failed = 0;
+    for (const [i, file] of files.entries()) {
+      try {
+        await uploadProductImage(detail.id, file, {
+          // Only the very first photo of a product with none becomes the cover.
+          isPrimary: images.length === 0 && i === 0,
+          sortOrder: images.length + i,
+        });
+      } catch {
+        failed += 1;
+      }
+    }
+    try { await refresh(); } catch { /* the message below still applies */ }
+    setMsg(failed
+      ? { kind: "error", text: `${files.length - failed} uploaded, ${failed} failed.` }
+      : { kind: "ok", text: files.length === 1 ? "Image uploaded." : `${files.length} images uploaded.` });
+    if (fileInput.current) fileInput.current.value = "";
+    setBusy(false);
+  }
+
+  async function removeImage(imageId: string) {
+    if (!detail) return;
     setBusy(true); setMsg(null);
     try {
-      await uploadProductImage(product.id, file, { isPrimary: images.length === 0 });
-      await onSaved();
-      setMsg({ kind: "ok", text: "Image uploaded." });
-      if (fileInput.current) fileInput.current.value = "";
+      await detachImage(detail.id, imageId);
+      await refresh();
+      setMsg({ kind: "ok", text: "Image removed." });
     } catch (e) {
-      setMsg({ kind: "error", text: errText(e, "Upload failed.") });
+      setMsg({ kind: "error", text: errText(e, "Could not remove the image.") });
+    } finally { setBusy(false); }
+  }
+
+  async function makeCover(imageId: string) {
+    if (!detail) return;
+    setBusy(true); setMsg(null);
+    try {
+      await setPrimaryImage(detail.id, imageId);
+      await refresh();
+      setMsg({ kind: "ok", text: "Cover image updated." });
+    } catch (e) {
+      setMsg({ kind: "error", text: errText(e, "Could not change the cover.") });
     } finally { setBusy(false); }
   }
 
   return (
     <section className="space-y-6">
       <Field label="Name">
-        <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
+        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={input} />
       </Field>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label={`Price (${product.currency})`}>
-          <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={input} />
+      <Field label="Description">
+        <textarea rows={4} value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })} className={input} />
+      </Field>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Price">
+          <input value={form.price} inputMode="decimal"
+            onChange={(e) => setForm({ ...form, price: e.target.value })} className={input} />
+        </Field>
+        <Field label="Currency">
+          <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} className={input}>
+            {["XAF", "XOF", "USD", "EUR", "GHS", "NGN", "UGX"].map((c) => <option key={c}>{c}</option>)}
+          </select>
         </Field>
         <Field label="Status">
-          <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className={input}>
+          <select value={form.status}
+            onChange={(e) => setForm({ ...form, status: e.target.value as AdminProductDetail["status"] })}
+            className={input}>
             <option value="draft">Draft</option>
             <option value="active">Active</option>
             <option value="archived">Archived</option>
           </select>
         </Field>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Category">
+          <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })} className={input}>
+            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Brand">
+          <select value={form.brand_id} onChange={(e) => setForm({ ...form, brand_id: e.target.value })} className={input}>
+            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <Field label="Tags (comma-separated — the first is shown under the name)">
+        <input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })}
+          placeholder="e.g. Suede slip-on, Leather sole" className={input} />
+      </Field>
+
+      <div className="space-y-4 border-t border-neutral-200 pt-6">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Sizes, colours & stock</h3>
+        <SizePicker sizes={sizes} onChange={setSizes} />
+        <ColorPicker colors={colors} onChange={setColors} />
+
+        {variants.length > 0 && (
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-xs text-neutral-500">
+              <span>Set every variant to</span>
+              <input value={fillAll} onChange={(e) => setFillAll(e.target.value)} inputMode="numeric"
+                className="w-20 rounded border border-neutral-300 px-2 py-1 text-sm" />
+              <button type="button"
+                onClick={() => {
+                  const n = String(Math.max(0, Math.floor(Number(fillAll) || 0)));
+                  setStock((cur) => ({
+                    ...cur,
+                    ...Object.fromEntries(variants.map((v) => [variantKey(v.color, v.size_eu), n])),
+                  }));
+                }}
+                className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50">
+                Apply
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="text-sm">
+                <thead>
+                  <tr>
+                    <th className="pr-3 text-left text-xs font-normal text-neutral-500">EU</th>
+                    {[...sizes].sort((a, b) => a - b).map((sz) => (
+                      <th key={sz} className="px-1 text-xs font-normal text-neutral-500">{sz}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {colors.map((c) => (
+                    <tr key={c}>
+                      <td className="whitespace-nowrap pr-3 py-1">
+                        <span aria-hidden className="mr-1.5 inline-block h-3 w-3 rounded-full border border-neutral-300 align-middle"
+                          style={{ background: colorHex(c) }} />
+                        {c}
+                      </td>
+                      {[...sizes].sort((a, b) => a - b).map((sz) => {
+                        const k = variantKey(c, sz);
+                        return (
+                          <td key={sz} className="px-1 py-1">
+                            <input aria-label={`Stock for ${c}, EU ${sz}`} value={stock[k] ?? "0"} inputMode="numeric"
+                              onChange={(e) => setStock((cur) => ({ ...cur, [k]: e.target.value }))}
+                              className="w-14 rounded border border-neutral-300 px-1.5 py-1 text-right text-sm" />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-1 text-xs text-neutral-500">
+              Removing a size or colour hides those variants; past orders that contain them are unaffected.
+            </p>
+          </div>
+        )}
       </div>
 
       <button type="button" onClick={save} disabled={busy} className={primary}>
@@ -788,16 +1078,36 @@ function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Pr
 
       <div className="border-t border-neutral-200 pt-6">
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
-          Images
+          Images ({images.length})
         </h3>
 
-        <div className="mb-4 flex flex-wrap gap-3">
-          {images.filter(Boolean).map((src) => (
-            <Image key={src} src={src} alt="" width={96} height={96}
-              className="h-24 w-24 rounded border border-neutral-200 object-cover" />
-          ))}
-          {images.length === 0 && <p className="text-sm text-neutral-500">No images yet.</p>}
-        </div>
+        <ul className="mb-4 flex flex-wrap gap-3">
+          {images.map((img) => {
+            const src = img.url_medium || img.url_thumbnail || img.url_original;
+            return (
+              <li key={img.id} className="w-28">
+                <div className="relative">
+                  <Image src={src} alt="" width={112} height={112} unoptimized
+                    className={`h-28 w-28 rounded border object-cover ${img.is_primary ? "border-neutral-900 border-2" : "border-neutral-200"}`} />
+                  {img.is_primary && (
+                    <span className="absolute left-1 top-1 rounded bg-neutral-900 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white">
+                      Cover
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 flex justify-between gap-1 text-xs">
+                  {!img.is_primary ? (
+                    <button type="button" disabled={busy} onClick={() => makeCover(img.id)}
+                      className="underline disabled:opacity-50">Make cover</button>
+                  ) : <span />}
+                  <button type="button" disabled={busy} onClick={() => removeImage(img.id)}
+                    className="text-red-700 underline disabled:opacity-50">Remove</button>
+                </div>
+              </li>
+            );
+          })}
+          {images.length === 0 && <li className="text-sm text-neutral-500">No images yet.</li>}
+        </ul>
 
         {/* A bare file input reads as nothing at all; this is the primary action
             on this panel, so it gets a real button. */}
@@ -807,20 +1117,21 @@ function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Pr
           onClick={() => fileInput.current?.click()}
           className="rounded border-2 border-dashed border-neutral-400 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:border-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
         >
-          {busy ? "Uploading…" : images.length === 0 ? "+ Upload an image" : "+ Upload another image"}
+          {busy ? "Working…" : images.length === 0 ? "+ Upload images" : "+ Add more images"}
         </button>
         <input
           ref={fileInput}
           type="file"
+          multiple
           accept="image/jpeg,image/png,image/webp"
           className="sr-only"
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void upload(f);
+            const picked = Array.from(e.target.files ?? []);
+            if (picked.length) void upload(picked);
           }}
         />
         <p className="mt-2 text-xs text-neutral-500">
-          JPEG, PNG or WebP, up to 10&nbsp;MB. Uploads go straight to Cloudinary.
+          JPEG, PNG or WebP, up to 10&nbsp;MB each. Uploads go straight to Cloudinary.
         </p>
       </div>
 
@@ -839,9 +1150,7 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
     category_id: "", brand_id: "", stock: "10", publish: true,
   });
   const [sizes, setSizes] = useState<number[]>([39, 40, 41, 42, 43, 44]);
-  const [otherSize, setOtherSize] = useState("");
-  const [color, setColor] = useState("Black");
-  const [otherColor, setOtherColor] = useState("");
+  const [colors, setColors] = useState<string[]>(["Black"]);
   // Photos are staged here and uploaded after the product exists — an image
   // needs a product id to attach to, so it cannot go up with the form itself.
   const [photos, setPhotos] = useState<File[]>([]);
@@ -870,9 +1179,8 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
       setBusy(false);
       return;
     }
-    const chosenColor = (color === "__other" ? otherColor : color).trim();
-    if (sizes.length === 0) {
-      setMsg({ kind: "error", text: "Pick at least one size — a product with none cannot be bought." });
+    if (sizes.length === 0 || colors.length === 0) {
+      setMsg({ kind: "error", text: "Pick at least one size and one colour — without both it cannot be bought." });
       setBusy(false);
       return;
     }
@@ -887,7 +1195,7 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
         category_id: form.category_id,
         brand_id: form.brand_id,
         sizes: [...sizes].sort((a, b) => a - b),
-        color: chosenColor || undefined,
+        colors,
         stock: Number(form.stock) || 0,
         status: form.publish ? "active" : "draft",
       });
@@ -965,73 +1273,12 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
         </Field>
       </div>
 
-      <div>
-        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
-          Sizes (EU)
-        </span>
-        <div className="flex flex-wrap gap-1.5">
-          {Array.from(new Set([...EU_SIZES, ...sizes])).sort((a, b) => a - b).map((sz) => {
-            const on = sizes.includes(sz);
-            return (
-              <button
-                key={sz}
-                type="button"
-                aria-pressed={on}
-                onClick={() =>
-                  setSizes((cur) => (on ? cur.filter((v) => v !== sz) : [...cur, sz]))
-                }
-                className={`min-w-[3rem] rounded border px-2.5 py-1.5 text-sm transition ${
-                  on
-                    ? "border-neutral-900 bg-neutral-900 text-white"
-                    : "border-neutral-300 hover:border-neutral-500"
-                }`}
-              >
-                {sz}
-              </button>
-            );
-          })}
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <input
-            value={otherSize}
-            onChange={(e) => setOtherSize(e.target.value)}
-            inputMode="decimal"
-            placeholder="Other size"
-            className="w-32 rounded border border-neutral-300 px-2 py-1 text-sm"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const v = Number(otherSize.trim());
-              if (Number.isFinite(v) && v > 0 && !sizes.includes(v)) setSizes((c) => [...c, v]);
-              setOtherSize("");
-            }}
-            className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50"
-          >
-            Add
-          </button>
-          <span className="text-xs text-neutral-500">
-            {sizes.length} selected — each becomes a buyable variant
-          </span>
-        </div>
-      </div>
+      <SizePicker sizes={sizes} onChange={setSizes} />
+
+      <ColorPicker colors={colors} onChange={setColors} />
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Colour">
-          <select value={color} onChange={(e) => setColor(e.target.value)} className={input}>
-            {COLORS.map((c) => <option key={c} value={c}>{c}</option>)}
-            <option value="__other">Other…</option>
-          </select>
-          {color === "__other" && (
-            <input
-              value={otherColor}
-              onChange={(e) => setOtherColor(e.target.value)}
-              placeholder="Colour name"
-              className={`${input} mt-2`}
-            />
-          )}
-        </Field>
-        <Field label="Stock per size">
+        <Field label="Stock per size & colour">
           <input value={form.stock} inputMode="numeric"
             onChange={(e) => setForm({ ...form, stock: e.target.value })} className={input} />
         </Field>

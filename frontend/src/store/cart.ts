@@ -53,6 +53,14 @@ export const useCart = create<CartState>()(
     {
       name: "hf:bag",
       storage: createJSONStorage(() => localStorage),
+      // Bags saved before the demo catalogue was removed can hold its ids
+      // ("p007"). No such product exists, so drop them rather than leave lines
+      // that never render and cannot be ordered.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<CartState>;
+        const isUuid = (id: string) => /^[0-9a-f-]{36}$/i.test(id);
+        return { ...current, ...p, items: (p.items ?? []).filter((i) => isUuid(i.productId)) };
+      },
       onRehydrateStorage: () => (state) => state?.setHydrated(true),
     },
   ),

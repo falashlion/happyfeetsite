@@ -20,7 +20,7 @@ GO    := $(GOENV) go
 
 .DEFAULT_GOAL := help
 .PHONY: help dev stop status infra-up infra-down infra-reset migrate migrate-down \
-        seed psql api web api-fg web-fg kill-api kill-web install build test lint \
+        psql api web api-fg web-fg kill-api kill-web install build test lint \
         typecheck check clean logs-api logs-web mail
 
 # ── Everything ────────────────────────────────────────────────────────────
@@ -82,10 +82,6 @@ migrate: ## Apply pending migrations
 
 migrate-down: ## Roll back one migration
 	@cd $(BACKEND) && $(GO) run ./cmd/migrate -direction down -steps 1
-
-seed: ## Load the demo catalogue
-	@docker exec -i happyfeet-postgres-1 psql -U happyfeet -d happyfeet < $(BACKEND)/migrations/seed_products.sql
-	@echo "✓ catalogue seeded"
 
 psql: ## Open a database shell
 	@docker exec -it happyfeet-postgres-1 psql -U happyfeet -d happyfeet

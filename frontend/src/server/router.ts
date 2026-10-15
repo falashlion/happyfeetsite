@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router, publicProcedure } from "./trpc";
-import { HF_PRODUCTS, HF_CATEGORIES, HF_BRANDS } from "@/lib/catalog";
+import { HF_CATEGORIES, HF_BRANDS } from "@/lib/catalog";
 import {
   listProductsApi,
   getProductByIdApi,
@@ -34,8 +34,6 @@ export const appRouter = router({
       .input(z.object({ slug: z.string() }))
       .query(({ input }) => getProductBySlugApi(input.slug)),
 
-    // Static "all" — kept for layouts that pre-render an exhaustive list.
-    all: publicProcedure.query(() => HF_PRODUCTS),
   }),
   taxonomy: router({
     categories: publicProcedure.query(async () => {

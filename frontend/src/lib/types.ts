@@ -26,7 +26,10 @@ export type Product = {
   id: string;
   slug: string;
   brand: string;
+  /** The category's slug, for links. */
   category: string;
+  /** The category's display name, e.g. "Women's Shoes". */
+  categoryName: string;
   name: string;
   subtitle: string;
   price: number;

@@ -286,7 +286,6 @@ make test        # Go tests
 make typecheck   # storefront types
 make build       # production build of both halves
 make psql        # database shell
-make seed        # reload the demo catalogue
 ```
 
 ### Architecture notes

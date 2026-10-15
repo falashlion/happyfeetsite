@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { BagClient } from "./bag-client";
-import { HF_PRODUCTS } from "@/lib/catalog";
-import { getBlurMap } from "@/lib/placeholder";
 import { tServer } from "@/lib/i18n/server";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -11,7 +9,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export const dynamic = "force-dynamic";
 
 export default async function BagPage() {
-  // Pre-compute blurs for every product image so any bag item renders crisply.
-  const blurs = await getBlurMap(HF_PRODUCTS.map((p) => p.image));
-  return <BagClient blurs={blurs} />;
+  // Bag contents live in the browser, so there is nothing to pre-blur here;
+  // items render with an empty placeholder until their image loads.
+  return <BagClient blurs={{}} />;
 }

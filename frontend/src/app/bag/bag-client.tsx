@@ -7,7 +7,6 @@ import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { Minus, Plus, ArrowRight, Sparkles } from "lucide-react";
 import { useCart } from "@/store/cart";
 import { useCoupon } from "@/store/coupon";
-import { HF_PRODUCTS } from "@/lib/catalog";
 import { formatPrice } from "@/lib/format";
 import { computeTotals } from "@/lib/coupons";
 import { getProductByIdApi } from "@/lib/api/products";
@@ -27,14 +26,13 @@ export function BagClient({ blurs }: { blurs: Record<string, string> }) {
   const applied = useCoupon((s) => s.applied);
   const setCoupon = useCoupon((s) => s.set);
 
-  // Resolve products: try the local static catalog first (instant), then fall
-  // back to the API for ids that aren't in the catalog (e.g. backend UUIDs).
+  // Resolve each bag item's product from the API.
   const [extraProducts, setExtraProducts] = useState<Record<string, Product>>({});
 
   useEffect(() => {
     const missing = items
       .map((it) => it.productId)
-      .filter((id) => !HF_PRODUCTS.find((p) => p.id === id) && !extraProducts[id]);
+      .filter((id) => !extraProducts[id]);
     if (missing.length === 0) return;
     let cancelled = false;
     Promise.all(missing.map((id) => getProductByIdApi(id))).then((results) => {
@@ -55,8 +53,7 @@ export function BagClient({ blurs }: { blurs: Record<string, string> }) {
   const enriched = useMemo(
     () =>
       items.flatMap((it) => {
-        const product =
-          HF_PRODUCTS.find((p) => p.id === it.productId) ?? extraProducts[it.productId];
+        const product = extraProducts[it.productId];
         return product ? [{ ...it, product }] : [];
       }),
     [items, extraProducts],

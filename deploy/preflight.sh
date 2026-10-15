@@ -51,8 +51,7 @@ for f in \
 	deploy/Caddyfile \
 	deploy/backup.sh \
 	backend/Dockerfile \
-	frontend/Dockerfile \
-	backend/migrations/seed_products.sql
+	frontend/Dockerfile
 do
 	[ -f "$f" ] && ok "$f" || no "missing: $f"
 done
