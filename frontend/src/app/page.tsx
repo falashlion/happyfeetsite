@@ -35,7 +35,7 @@ export default async function HomePage() {
     { slug: "sneakers", label: t("home.cat.sneakers.label"), sub: t("home.cat.sneakers.sub"), src: "https://images.unsplash.com/photo-1606107557195-0e29a4b5b4aa?w=800&q=80" },
     { slug: "loafers",  label: t("home.cat.loafers.label"),  sub: t("home.cat.loafers.sub"),  src: "https://images.unsplash.com/photo-1614253429340-98120bd6d753?w=800&q=80" },
     { slug: "boots",    label: t("home.cat.boots.label"),    sub: t("home.cat.boots.sub"),    src: "https://images.unsplash.com/photo-1549298916-b41d501d3772?w=800&q=80" },
-    { slug: "formal",   label: t("home.cat.formal.label"),   sub: t("home.cat.formal.sub"),   src: "https://images.unsplash.com/photo-1582588678413-dbf45f4823e9?w=800&q=80" },
+    { slug: "formal-dress", label: t("home.cat.formal.label"),   sub: t("home.cat.formal.sub"),   src: "https://images.unsplash.com/photo-1582588678413-dbf45f4823e9?w=800&q=80" },
   ];
 
   const PROMISES = [
@@ -69,7 +69,7 @@ export default async function HomePage() {
             </h1>
             <p className="lede">{t("home.lede")}</p>
             <div className="actions">
-              <Link href="/shop/sneakers" className="btn btn-gold btn-lg">
+              <Link href="/shop/all" className="btn btn-gold btn-lg">
                 {t("home.cta_browse")} <ArrowRight size={18} strokeWidth={1.5} />
               </Link>
               {heroProduct && (
@@ -123,7 +123,7 @@ export default async function HomePage() {
           eyebrow={t("home.section.shopby_eyebrow")}
           title={t("home.section.shopby_title")}
           action={
-            <Link href="/shop/sneakers" className="btn btn-ghost">
+            <Link href="/shop" className="btn btn-ghost">
               {t("home.section.shopby_action")} <ArrowRight size={16} strokeWidth={1.5} />
             </Link>
           }
@@ -152,7 +152,8 @@ export default async function HomePage() {
           eyebrow={t("home.section.new_eyebrow")}
           title={t("home.section.new_title")}
           action={
-            <Link href="/shop/sneakers" className="btn btn-ghost">
+            // The full list is newest-first, so it is the new-arrivals page.
+            <Link href="/shop/all" className="btn btn-ghost">
               {t("home.section.new_action")} <ArrowRight size={16} strokeWidth={1.5} />
             </Link>
           }

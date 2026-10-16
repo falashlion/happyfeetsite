@@ -728,7 +728,7 @@ function EmptyBag({ t }: { t: T }) {
       >
         {t("checkout.empty_lede")}
       </p>
-      <Link href="/shop/sneakers" className="btn btn-primary btn-lg" style={{ marginTop: 28 }}>
+      <Link href="/shop/all" className="btn btn-primary btn-lg" style={{ marginTop: 28 }}>
         {t("checkout.empty_cta")}
       </Link>
     </section>

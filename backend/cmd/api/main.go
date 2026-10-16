@@ -421,6 +421,7 @@ func main() {
 			r.Delete("/products/{id}/images/{imageId}", productH.DeleteImage)
 			r.Post("/products/{id}/images/{imageId}/primary", productH.SetPrimaryImage)
 			r.Post("/categories", productH.CreateCategory)
+			r.Post("/brands", productH.CreateBrand)
 
 			// Fulfilment queue. Reads are unrestricted across customers and
 			// writes are confined to the transition map in internal/order.

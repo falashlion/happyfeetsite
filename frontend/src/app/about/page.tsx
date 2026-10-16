@@ -42,7 +42,7 @@ export default async function AboutPage() {
         <p>{t("about.p1")}</p>
         <p style={{ marginTop: 16 }}>{t("about.p2")}</p>
       </div>
-      <Link href="/shop/sneakers" className="btn btn-primary btn-lg" style={{ marginTop: 36 }}>
+      <Link href="/shop/all" className="btn btn-primary btn-lg" style={{ marginTop: 36 }}>
         {t("about.cta")}
       </Link>
     </section>

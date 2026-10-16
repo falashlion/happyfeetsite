@@ -107,7 +107,7 @@ export function Header({ categories }: { categories?: NavLink[] }) {
           <div className="hidden lg:flex">
             <LocaleToggle />
           </div>
-          <Link href="/shop/sneakers" className="nav-action" aria-label={t("nav.search")}>
+          <Link href="/shop/all" className="nav-action" aria-label={t("nav.search")}>
             <Search size={18} strokeWidth={1.5} />
             <span>{t("nav.search")}</span>
           </Link>

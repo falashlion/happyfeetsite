@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { me, type AuthUser } from "@/lib/api/auth";
 import {
-  listAdminProducts, listCategories, listBrands, createCategory, createProduct,
+  listAdminProducts, listCategories, listBrands, createCategory, createBrand, createProduct,
   updateProduct, uploadProductImage, listPromotions, createPromotion,
   setPromotionActive, broadcastNotification,
   listAdminOrders, getAdminOrder, updateOrderStatus,
@@ -28,7 +28,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "orders", label: "Orders" },
   { id: "catalogue", label: "Catalogue" },
   { id: "new", label: "New product" },
-  { id: "categories", label: "Categories" },
+  { id: "categories", label: "Categories & brands" },
   { id: "discounts", label: "Discounts" },
   { id: "announce", label: "Announce" },
 ];
@@ -801,6 +801,42 @@ function ColorPicker({ colors, onChange }: { colors: string[]; onChange: (c: str
   );
 }
 
+/**
+ * The other categories a product also appears under. The primary one is shown
+ * ticked and locked: it is the breadcrumb, so it is always included.
+ */
+function AlsoInCategories({
+  cats, primary, extra, onChange,
+}: {
+  cats: Category[];
+  primary: string;
+  extra: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  if (cats.length < 2) return null;
+  return (
+    <div>
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        Also show under
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {cats.map((c) => {
+          const isPrimary = c.id === primary;
+          const on = isPrimary || extra.includes(c.id);
+          return (
+            <button key={c.id} type="button" aria-pressed={on} disabled={isPrimary}
+              title={isPrimary ? "Primary category — always included" : undefined}
+              className={`${chip(on)} ${isPrimary ? "cursor-default opacity-70" : ""}`}
+              onClick={() => onChange(on ? extra.filter((id) => id !== c.id) : [...extra, c.id])}>
+              {c.name}{isPrimary ? " · primary" : ""}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Editor ────────────────────────────────────────────────────────────────────
 
 const variantKey = (color: string, size: number) => `${color.toLowerCase()}|${size}`;
@@ -813,6 +849,7 @@ function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Pr
     name: "", description: "", price: "", currency: "XAF",
     category_id: "", brand_id: "", status: "active" as AdminProductDetail["status"], tags: "",
   });
+  const [extraCats, setExtraCats] = useState<string[]>([]);
   const [sizes, setSizes] = useState<number[]>([]);
   const [colors, setColors] = useState<string[]>([]);
   // Stock per colour × size, as typed. Combinations not in here start at 0.
@@ -836,6 +873,7 @@ function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Pr
       status: d.status,
       tags: (d.tags ?? []).join(", "),
     });
+    setExtraCats((d.category_ids ?? []).filter((id) => id !== d.category_id));
     const skus = d.skus ?? [];
     setSizes(Array.from(new Set(skus.map((s) => s.size_eu))).sort((a, b) => a - b));
     setColors(skus.reduce<string[]>(
@@ -897,6 +935,12 @@ function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Pr
     if (price !== detail.base_price) patch.base_price = price;
     if (form.currency !== detail.currency) patch.currency = form.currency;
     if (form.category_id !== detail.category_id) patch.category_id = form.category_id;
+    const extra = extraCats.filter((id) => id !== form.category_id);
+    const extraBefore = (detail.category_ids ?? []).filter((id) => id !== detail.category_id);
+    if (form.category_id !== detail.category_id ||
+        [...extra].sort().join() !== [...extraBefore].sort().join()) {
+      patch.category_ids = extra;
+    }
     if (form.brand_id !== detail.brand_id) patch.brand_id = form.brand_id;
     if (form.status !== detail.status) patch.status = form.status;
     const tags = form.tags.split(",").map((t) => t.trim()).filter(Boolean);
@@ -992,7 +1036,7 @@ function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Pr
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Category">
+        <Field label="Primary category">
           <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })} className={input}>
             {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -1003,6 +1047,8 @@ function Editor({ product, onSaved }: { product: AdminProduct; onSaved: () => Pr
           </select>
         </Field>
       </div>
+
+      <AlsoInCategories cats={cats} primary={form.category_id} extra={extraCats} onChange={setExtraCats} />
 
       <Field label="Tags (comma-separated — the first is shown under the name)">
         <input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })}
@@ -1151,6 +1197,7 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
   });
   const [sizes, setSizes] = useState<number[]>([39, 40, 41, 42, 43, 44]);
   const [colors, setColors] = useState<string[]>(["Black"]);
+  const [extraCats, setExtraCats] = useState<string[]>([]);
   // Photos are staged here and uploaded after the product exists — an image
   // needs a product id to attach to, so it cannot go up with the form itself.
   const [photos, setPhotos] = useState<File[]>([]);
@@ -1193,6 +1240,7 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
         base_price: price,
         currency: form.currency,
         category_id: form.category_id,
+        category_ids: extraCats.filter((id) => id !== form.category_id),
         brand_id: form.brand_id,
         sizes: [...sizes].sort((a, b) => a - b),
         colors,
@@ -1261,7 +1309,7 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Category">
+        <Field label="Primary category">
           <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })} className={input}>
             {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -1272,6 +1320,8 @@ function NewProductForm({ onCreated }: { onCreated: () => void }) {
           </select>
         </Field>
       </div>
+
+      <AlsoInCategories cats={cats} primary={form.category_id} extra={extraCats} onChange={setExtraCats} />
 
       <SizePicker sizes={sizes} onChange={setSizes} />
 
@@ -1363,30 +1413,83 @@ function Categories() {
   }
 
   return (
-    <section className="max-w-2xl space-y-6">
+    <div className="space-y-12">
+      <section className="max-w-2xl space-y-6">
+        <div className="space-y-4">
+          <Field label="New category">
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Loafers" className={input} />
+          </Field>
+          <Field label="Parent (optional)">
+            <select value={parent} onChange={(e) => setParent(e.target.value)} className={input}>
+              <option value="">— top level —</option>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+          <button type="button" onClick={add} disabled={busy || !name.trim()} className={primary}>
+            {busy ? "Creating…" : "Add category"}
+          </button>
+          <Note msg={msg} />
+        </div>
+
+        <div className="border-t border-neutral-200 pt-6">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Existing categories ({cats.length})
+          </h3>
+          <ul className="flex flex-wrap gap-2">
+            {cats.map((c) => (
+              <li key={c.id} className="rounded-full bg-neutral-100 px-3 py-1 text-sm">{c.name}</li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      <Brands />
+    </div>
+  );
+}
+
+function Brands() {
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<Msg>(null);
+
+  const reload = useCallback(async () => setBrands(await listBrands()), []);
+  useEffect(() => { void reload(); }, [reload]);
+
+  async function add() {
+    setBusy(true); setMsg(null);
+    try {
+      await createBrand(name.trim());
+      setName("");
+      await reload();
+      setMsg({ kind: "ok", text: "Brand created. It is now in the brand list on New product." });
+    } catch (e) {
+      setMsg({ kind: "error", text: errText(e, "Could not create the brand.") });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <section className="max-w-2xl space-y-6 border-t border-neutral-200 pt-10">
       <div className="space-y-4">
-        <Field label="New category">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Loafers" className={input} />
-        </Field>
-        <Field label="Parent (optional)">
-          <select value={parent} onChange={(e) => setParent(e.target.value)} className={input}>
-            <option value="">— top level —</option>
-            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+        <Field label="New brand">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Loro Piana"
+            onKeyDown={(e) => { if (e.key === "Enter" && name.trim() && !busy) void add(); }}
+            className={input} />
         </Field>
         <button type="button" onClick={add} disabled={busy || !name.trim()} className={primary}>
-          {busy ? "Creating…" : "Add category"}
+          {busy ? "Creating…" : "Add brand"}
         </button>
         <Note msg={msg} />
       </div>
 
       <div className="border-t border-neutral-200 pt-6">
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
-          Existing ({cats.length})
+          Existing brands ({brands.length})
         </h3>
         <ul className="flex flex-wrap gap-2">
-          {cats.map((c) => (
-            <li key={c.id} className="rounded-full bg-neutral-100 px-3 py-1 text-sm">{c.name}</li>
+          {brands.map((b) => (
+            <li key={b.id} className="rounded-full bg-neutral-100 px-3 py-1 text-sm">{b.name}</li>
           ))}
         </ul>
       </div>

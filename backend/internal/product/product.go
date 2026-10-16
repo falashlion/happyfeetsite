@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -56,24 +57,27 @@ type Product struct {
 	// CategorySlug is what the storefront links to. Without it the client had
 	// to guess a slug from the label, and "Women's Shoes" contains "men".
 	CategorySlug string
-	BrandID      string
-	BrandName    string
-	Name         string
-	Slug         string
-	Description  *string
-	BasePrice    float64
-	FinalPrice   float64
-	Currency     string
-	Status       string
-	Tags         []string
-	RatingAvg    float64
-	RatingCount  int
-	TotalSales   float64
-	InStock      bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	Images       []Image
-	SKUs         []SKU
+	// CategoryIDs is every category the product is listed under, primary
+	// included. Only loaded for the detail view.
+	CategoryIDs []string
+	BrandID     string
+	BrandName   string
+	Name        string
+	Slug        string
+	Description *string
+	BasePrice   float64
+	FinalPrice  float64
+	Currency    string
+	Status      string
+	Tags        []string
+	RatingAvg   float64
+	RatingCount int
+	TotalSales  float64
+	InStock     bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	Images      []Image
+	SKUs        []SKU
 }
 
 // JSON tags are load-bearing: without them Go serialises the field names
@@ -144,11 +148,18 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]*Product, string
 	if f.Search != nil && *f.Search != "" {
 		conds = append(conds, fmt.Sprintf("p.name ILIKE $%d", add("%"+*f.Search+"%")))
 	}
+	// Category filters go through product_categories so a product shows under
+	// every category it was put in, not just its primary one. They reference
+	// only p, because the COUNT below runs without the joins.
 	if f.CategoryID != nil {
-		conds = append(conds, fmt.Sprintf("p.category_id=$%d", add(*f.CategoryID)))
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS(SELECT 1 FROM product_categories pc WHERE pc.product_id=p.id AND pc.category_id=$%d)",
+			add(*f.CategoryID)))
 	}
 	if f.CategorySlug != nil {
-		conds = append(conds, fmt.Sprintf("c.slug=$%d", add(*f.CategorySlug)))
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS(SELECT 1 FROM product_categories pc JOIN categories cs ON cs.id=pc.category_id "+
+				"WHERE pc.product_id=p.id AND cs.slug=$%d)", add(*f.CategorySlug)))
 	}
 	if f.BrandID != nil {
 		conds = append(conds, fmt.Sprintf("p.brand_id=$%d", add(*f.BrandID)))
@@ -315,7 +326,64 @@ func (r *Repository) get(ctx context.Context, cond, val string) (*Product, error
 	p.FinalPrice = p.BasePrice
 	p.Images, _ = r.images(ctx, p.ID)
 	p.SKUs, _ = r.skus(ctx, p.ID)
+	p.CategoryIDs, _ = r.categoryIDs(ctx, p.ID, p.CategoryID)
 	return p, nil
+}
+
+// categoryIDs lists the product's categories, primary first.
+func (r *Repository) categoryIDs(ctx context.Context, productID, primary string) ([]string, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT category_id::text FROM product_categories WHERE product_id=$1`, productID)
+	if err != nil {
+		return []string{primary}, err
+	}
+	defer rows.Close()
+	ids := []string{primary}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil && id != primary {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// SetCategories makes the product's categories exactly primary plus extra.
+// The primary is always included: it is the breadcrumb, and a product must
+// appear under the category it claims to belong to.
+func (r *Repository) SetCategories(ctx context.Context, productID, primary string, extra []string) error {
+	ids := []string{primary}
+	for _, id := range extra {
+		if id != primary && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM product_categories WHERE product_id=$1 AND NOT (category_id::text = ANY($2))`,
+		productID, ids); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO product_categories(product_id,category_id)
+		SELECT $1::uuid, unnest($2::text[])::uuid ON CONFLICT DO NOTHING`, productID, ids); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// CreateBrand adds a brand. Like categories, the slug comes from the name and
+// is UNIQUE, so a repeat is reported as a conflict.
+func (r *Repository) CreateBrand(ctx context.Context, name string) (string, string, error) {
+	var id string
+	slug := slugify(name)
+	err := r.db.QueryRow(ctx,
+		`INSERT INTO brands(name,slug) VALUES($1,$2) RETURNING id`, name, slug).Scan(&id)
+	return id, slug, err
 }
 
 func (r *Repository) images(ctx context.Context, productID string) ([]Image, error) {
@@ -769,7 +837,8 @@ func (r *Repository) ListCategories(ctx context.Context) ([]*Category, error) {
 		SELECT c.id,c.parent_id,c.name,c.slug,c.icon_url,
 		       COUNT(p.id) FILTER(WHERE p.status='active') AS cnt
 		FROM categories c
-		LEFT JOIN products p ON p.category_id=c.id AND p.deleted_at IS NULL
+		LEFT JOIN product_categories pc ON pc.category_id=c.id
+		LEFT JOIN products p ON p.id=pc.product_id AND p.deleted_at IS NULL
 		WHERE c.is_active=true GROUP BY c.id ORDER BY c.sort_order,c.name`)
 	if err != nil {
 		return nil, err
@@ -999,8 +1068,10 @@ func (h *Handler) GetBySlug(w http.ResponseWriter, r *http.Request) {
 }
 
 type createProductReq struct {
-	Name        string   `json:"name"        validate:"required,max=255"`
-	CategoryID  string   `json:"category_id" validate:"required"`
+	Name       string `json:"name"        validate:"required,max=255"`
+	CategoryID string `json:"category_id" validate:"required,uuid4"`
+	// CategoryIDs are further categories to list it under, besides the primary.
+	CategoryIDs []string `json:"category_ids" validate:"omitempty,max=20,dive,uuid4"`
 	BrandID     string   `json:"brand_id"    validate:"required"`
 	Description string   `json:"description" validate:"required"`
 	BasePrice   float64  `json:"base_price"  validate:"required,gte=0"`
@@ -1066,6 +1137,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		log.Error().Err(err).Str("rid", rid).Msg("create product")
 		response.InternalError(w, rid)
 		return
+	}
+	if err := h.repo.SetCategories(r.Context(), id, req.CategoryID, req.CategoryIDs); err != nil {
+		log.Error().Err(err).Str("rid", rid).Str("product", id).Msg("set categories")
 	}
 	// Give the product something to be bought as. Default to a usual run of
 	// sizes rather than leaving it unbuyable when the caller sends none.
@@ -1245,7 +1319,8 @@ func fmtDetail(p *Product) map[string]any {
 	return map[string]any{
 		"id": p.ID, "name": p.Name, "slug": p.Slug, "description": p.Description,
 		"brand": p.BrandName, "brand_id": p.BrandID, "category": p.CategoryName, "category_id": p.CategoryID, "category_slug": p.CategorySlug,
-		"vendor_id": p.VendorID, "vendor_name": p.VendorName,
+		"category_ids": p.CategoryIDs,
+		"vendor_id":    p.VendorID, "vendor_name": p.VendorName,
 		"base_price": p.BasePrice, "final_price": p.FinalPrice, "currency": p.Currency,
 		"status": p.Status, "tags": p.Tags, "rating_avg": p.RatingAvg, "rating_count": p.RatingCount,
 		"in_stock": p.InStock, "images": imgs, "skus": skus,
@@ -1309,8 +1384,10 @@ func isUUID(s string) bool {
 }
 
 type updateProductReq struct {
-	Name        *string   `json:"name"        validate:"omitempty,max=255"`
-	CategoryID  *string   `json:"category_id" validate:"omitempty,uuid4"`
+	Name       *string `json:"name"        validate:"omitempty,max=255"`
+	CategoryID *string `json:"category_id" validate:"omitempty,uuid4"`
+	// CategoryIDs replaces the extra categories; the primary is always kept.
+	CategoryIDs *[]string `json:"category_ids" validate:"omitempty,max=20,dive,uuid4"`
 	BrandID     *string   `json:"brand_id"    validate:"omitempty,uuid4"`
 	Description *string   `json:"description" validate:"omitempty"`
 	BasePrice   *float64  `json:"base_price"  validate:"omitempty,gte=0"`
@@ -1340,7 +1417,17 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.repo.Update(r.Context(), id, UpdateParams{
+	before, err := h.repo.GetByID(r.Context(), id)
+	if errors.Is(err, ErrNotFound) {
+		response.NotFound(w, "Product", rid)
+		return
+	}
+	if err != nil {
+		response.InternalError(w, rid)
+		return
+	}
+
+	err = h.repo.Update(r.Context(), id, UpdateParams{
 		Name:        req.Name,
 		CategoryID:  req.CategoryID,
 		BrandID:     req.BrandID,
@@ -1355,8 +1442,40 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if strings.Contains(err.Error(), "foreign key") {
+			response.BadRequest(w, "Unknown category or brand", rid)
+			return
+		}
 		response.InternalError(w, rid)
 		return
+	}
+
+	if req.CategoryID != nil || req.CategoryIDs != nil {
+		primary := before.CategoryID
+		if req.CategoryID != nil {
+			primary = *req.CategoryID
+		}
+		// Moving only the primary swaps it in place; the old primary does not
+		// linger as an extra the editor never asked for.
+		extra := []string{}
+		if req.CategoryIDs != nil {
+			extra = *req.CategoryIDs
+		} else {
+			for _, c := range before.CategoryIDs {
+				if c != before.CategoryID {
+					extra = append(extra, c)
+				}
+			}
+		}
+		if err := h.repo.SetCategories(r.Context(), id, primary, extra); err != nil {
+			if strings.Contains(err.Error(), "foreign key") {
+				response.BadRequest(w, "Unknown category", rid)
+				return
+			}
+			log.Error().Err(err).Str("rid", rid).Str("product", id).Msg("set categories")
+			response.InternalError(w, rid)
+			return
+		}
 	}
 
 	p, err := h.repo.GetByID(r.Context(), id)
@@ -1567,6 +1686,41 @@ func (h *Handler) SetPrimaryImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.NoContent(w)
+}
+
+type createBrandReq struct {
+	Name string `json:"name" validate:"required,max=100"`
+}
+
+// CreateBrand godoc
+// @Summary      Create a brand (admin)
+// @Tags         categories
+// @Security     BearerAuth
+// @Success      201  {object}  map[string]any
+// @Router       /admin/brands [post]
+func (h *Handler) CreateBrand(w http.ResponseWriter, r *http.Request) {
+	rid := middleware.GetRequestID(r.Context())
+	var req createBrandReq
+	if err := validator.Decode(r, &req); err != nil {
+		response.ValidationError(w, err, rid)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if slugify(name) == "" {
+		response.BadRequest(w, "Brand name needs at least one letter or digit", rid)
+		return
+	}
+	id, slug, err := h.repo.CreateBrand(r.Context(), name)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			response.Conflict(w, "A brand with this name already exists", rid)
+			return
+		}
+		log.Error().Err(err).Str("rid", rid).Msg("create brand")
+		response.InternalError(w, rid)
+		return
+	}
+	response.Created(w, map[string]any{"id": id, "name": name, "slug": slug})
 }
 
 type createCategoryReq struct {

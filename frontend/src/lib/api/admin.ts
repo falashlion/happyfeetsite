@@ -31,6 +31,8 @@ export type ProductPatch = {
   currency?: string;
   status?: "draft" | "active" | "archived";
   category_id?: string;
+  /** Further categories to list it under; the primary is always kept. */
+  category_ids?: string[];
   brand_id?: string;
   tags?: string[];
 };
@@ -165,6 +167,8 @@ export type AdminProductDetail = {
   description: string | null;
   brand_id: string;
   category_id: string;
+  /** Every category it is listed under, primary first. */
+  category_ids?: string[];
   base_price: number;
   currency: string;
   status: "draft" | "active" | "archived";
@@ -235,9 +239,15 @@ export async function createCategory(name: string, parentId?: string) {
   });
 }
 
+export async function createBrand(name: string) {
+  return apiFetch<Brand>("/admin/brands", { method: "POST", body: { name } });
+}
+
 export type NewProduct = {
   name: string;
   category_id: string;
+  /** Further categories to list it under, besides the primary. */
+  category_ids?: string[];
   brand_id: string;
   description: string;
   base_price: number;

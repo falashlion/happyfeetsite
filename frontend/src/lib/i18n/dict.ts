@@ -142,6 +142,12 @@ const en: Dict = {
     "No pairs to show. Try clearing the filters, or browse another category.",
   "plp.sale_name": "The Atelier Sale",
   "plp.all_name": "All shoes",
+  "shop.index.metadata_title": "All categories",
+  "shop.index.eyebrow": "Shop by category",
+  "shop.index.title": "Every category, in one place.",
+  "shop.index.count_one": "{{n}} pair",
+  "shop.index.count_other": "{{n}} pairs",
+  "shop.index.empty": "No categories yet.",
 
   // ── PDP ────────────────────────────────────────────────────────────────────
   "pdp.brand": "Brand",
@@ -541,6 +547,12 @@ const fr: Dict = {
     "Aucune paire à afficher. Effacez les filtres ou explorez une autre catégorie.",
   "plp.sale_name": "La Vente de l’Atelier",
   "plp.all_name": "Tous les souliers",
+  "shop.index.metadata_title": "Toutes les catégories",
+  "shop.index.eyebrow": "Par catégorie",
+  "shop.index.title": "Toutes les catégories, au même endroit.",
+  "shop.index.count_one": "{{n}} paire",
+  "shop.index.count_other": "{{n}} paires",
+  "shop.index.empty": "Aucune catégorie pour l’instant.",
 
   // ── PDP ────────────────────────────────────────────────────────────────────
   "pdp.brand": "Marque",

@@ -16,6 +16,7 @@ const CATEGORY_NAME_KEY: Record<string, string> = {
   loafers: "home.cat.loafers.label",
   boots: "home.cat.boots.label",
   formal: "home.cat.formal.label",
+  "formal-dress": "home.cat.formal.label",
   sandals: "home.cat.sneakers.label", // closest existing label; specific key below if you add one
 };
 
@@ -26,6 +27,7 @@ const TITLE_BY_CAT: Record<string, string> = {
   boots: "plp.title.boots",
   loafers: "plp.title.loafers",
   formal: "plp.title.formal",
+  "formal-dress": "plp.title.formal",
   sandals: "plp.title.sandals",
 };
 

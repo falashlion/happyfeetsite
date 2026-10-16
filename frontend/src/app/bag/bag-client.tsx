@@ -259,7 +259,7 @@ function EmptyState({ t }: { t: (k: string, v?: Record<string, string | number>)
       >
         {t("bag.empty_lede")}
       </p>
-      <Link href="/shop/sneakers" className="btn btn-primary btn-lg" style={{ marginTop: 28 }}>
+      <Link href="/shop/all" className="btn btn-primary btn-lg" style={{ marginTop: 28 }}>
         {t("bag.empty_cta")}
       </Link>
     </section>
